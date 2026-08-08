@@ -1,13 +1,70 @@
-import { PageStub } from "@/components/PageStub";
-import { DashboardIcon } from "@/layout/icons";
+import { Spin } from "antd";
+import type { ReactNode } from "react";
+
+import {
+  useAttention, useFunnel, useKpis, useLeads, useManagers,
+  useRevenueSeries, useRomiByChannel, useSources,
+} from "@/api/dashboard";
+import { AttentionBlock } from "@/components/AttentionBlock";
+import { EChart } from "@/components/EChart";
+import { KpiRow } from "@/components/KpiRow";
+import { LeadsTable } from "@/components/LeadsTable";
+import { ManagersTable } from "@/components/ManagersTable";
+import {
+  donutOption, funnelOption, revenueOption, romiBarOption,
+} from "@/components/chartOptions";
+import { useFilters } from "@/state/filters";
+
+function ChartCard({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
+  return (
+    <div className="card">
+      <div className="card-h"><h3>{title}</h3><span className="sub">{sub}</span></div>
+      <div className="card-p">{children}</div>
+    </div>
+  );
+}
 
 export default function DashboardPage() {
+  const f = useFilters();
+  const kpis = useKpis(f.period);
+  const attention = useAttention();
+  const funnel = useFunnel(f.period);
+  const sources = useSources();
+  const revenue = useRevenueSeries(f.period);
+  const romi = useRomiByChannel();
+  const managers = useManagers();
+  const leads = useLeads(f.mgr, f.source, f.leadFilter);
+
   return (
-    <PageStub
-      Icon={DashboardIcon}
-      title="Дашборд"
-      description="KPI, блок «Что требует внимания», воронка обработки, источники лидов, выручка и маржа, ROMI по каналам, контроль по менеджерам и таблица лидов."
-      stage="Наполнение — Этап D"
-    />
+    <>
+      {attention.data ? <AttentionBlock data={attention.data} /> : null}
+      {kpis.data ? <KpiRow cards={kpis.data} /> : <div style={{ minHeight: 120 }}><Spin /></div>}
+
+      <div className="grid two" style={{ marginTop: 16 }}>
+        <ChartCard title="Воронка обработки" sub="лид → квалификация → сделка → счёт → оплата">
+          {funnel.data ? <EChart option={funnelOption(funnel.data)} height={280} /> : <Spin />}
+        </ChartCard>
+        <ChartCard title="Источники лидов" sub="по каналам">
+          {sources.data ? <EChart option={donutOption(sources.data)} height={280} /> : <Spin />}
+        </ChartCard>
+      </div>
+
+      <div className="grid two-b" style={{ marginTop: 16 }}>
+        <ChartCard title="Выручка и маржа" sub="динамика по дням, ₽">
+          {revenue.data ? <EChart option={revenueOption(revenue.data)} height={260} /> : <Spin />}
+        </ChartCard>
+        <ChartCard title="ROMI по каналам" sub="возврат на рекламу">
+          {romi.data ? <EChart option={romiBarOption(romi.data)} height={260} /> : <Spin />}
+        </ChartCard>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        {managers.data ? <ManagersTable rows={managers.data} /> : null}
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        {leads.data ? <LeadsTable rows={leads.data} /> : null}
+      </div>
+    </>
   );
 }
