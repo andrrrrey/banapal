@@ -1,0 +1,29 @@
+# Секреты и окружение
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Docker / данные
+postgres-data/
+*.log
+
+# IDE / ОС
+.idea/
+.vscode/
+.DS_Store
+*.tsbuildinfo
