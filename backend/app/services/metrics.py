@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Baseline, Channel, Deal, KpiCard, ManagerControl, Violation
+from app.models import Baseline, Channel, Deal, KpiCard, ManagerControl
 from app.services import format as f
 from app.services import period as per
 
@@ -87,12 +87,12 @@ async def romi_by_channel(session: AsyncSession) -> list[dict]:
 
 
 async def attention(session: AsyncSession) -> dict:
-    over = (await session.execute(
-        select(Violation).where(Violation.category == "regular", Violation.severity == "over")
-    )).scalars().all()
-    money_at_risk = sum(v.amount for v in over)
+    from app.services import violations as vio
+
+    res = await vio.evaluate_current(session)
+    money_at_risk = vio.money_at_risk(res["regular"])
     risk_leads = (await session.execute(
-        select(Deal).where(Deal.risk.is_not(None))
+        select(Deal).where(Deal.risk.is_not(None), Deal.on_dashboard.is_(True))
     )).scalars().all()
 
     tiles = [
@@ -137,7 +137,7 @@ async def managers(session: AsyncSession) -> list[dict]:
 async def leads(
     session: AsyncSession, mgr: str = "all", source: str = "all", risk: str | None = None
 ) -> list[dict]:
-    stmt = select(Deal).order_by(Deal.position)
+    stmt = select(Deal).where(Deal.on_dashboard.is_(True)).order_by(Deal.position)
     if mgr and mgr != "all":
         stmt = stmt.where(Deal.mgr == mgr)
     if source and source != "all":

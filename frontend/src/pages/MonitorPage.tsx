@@ -1,13 +1,142 @@
-import { PageStub } from "@/components/PageStub";
-import { MonitorIcon } from "@/layout/icons";
+import { App, Button, Spin } from "antd";
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+
+import { useCreateTask, useMonitorStats, useReview, useViolations } from "@/api/monitor";
+import { ViolationRow } from "@/components/ViolationRow";
+
+const PTYPE_LABEL: Record<string, string> = {
+  overdue_contact: "Просрочка первого контакта",
+  no_task: "Сделки без задачи",
+  stuck: "Зависшие сделки",
+  no_recontact: "Без повторного касания",
+  fields: "Незаполненные поля",
+  dup: "Возможные дубли",
+  spam: "Подозрительный спам/отказ",
+  refusal: "Подозрительный спам/отказ",
+};
 
 export default function MonitorPage() {
+  const [params, setParams] = useSearchParams();
+  const filter = params.get("ptype");
+  const isReviewFilter = filter === "spam" || filter === "refusal";
+
+  const stats = useMonitorStats();
+  const violations = useViolations(filter);
+  const review = useReview();
+  const createTask = useCreateTask();
+  const { message } = App.useApp();
+  const [done, setDone] = useState<Set<string>>(new Set());
+
+  const clearFilter = () => setParams({});
+
+  const onTask = (ref: string) => {
+    createTask.mutate(ref, {
+      onSuccess: (res) => {
+        setDone((prev) => new Set(prev).add(ref));
+        message.success(`Задача создана в Битрикс24 · ${res.assignee}`);
+      },
+      onError: () => message.error("Не удалось создать задачу"),
+    });
+  };
+
+  const showReviewCard = !filter || isReviewFilter;
+
   return (
-    <PageStub
-      Icon={MonitorIcon}
-      title="Мониторинг Битрикс24"
-      description="Нарушения регламента в реальном времени, статистика по типам и блок «Требует решения руководителя» (оценочные нарушения без автоклассификации)."
-      stage="Наполнение — Этап C"
-    />
+    <>
+      {filter ? (
+        <div style={{ marginBottom: 14 }}>
+          <span className="filterpill">
+            Фильтр: <b>{PTYPE_LABEL[filter] ?? filter}</b>
+            <button onClick={clearFilter}>×</button>
+          </span>
+        </div>
+      ) : null}
+
+      <div className="grid mon-stats">
+        {stats.data?.stats.map((s, i) => (
+          <div key={i} className={`mstat ${s.cls}`}>
+            <div className="mn num">{s.n}</div>
+            <div className="ml">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="card">
+        <div className="card-h">
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <h3>Нарушения регламента</h3>
+            <span className="live">
+              <span className="p" />В реальном времени
+            </span>
+          </div>
+        </div>
+        <div className="deal-list">
+          {violations.isLoading ? (
+            <div style={{ padding: 40, textAlign: "center" }}>
+              <Spin />
+            </div>
+          ) : isReviewFilter ? (
+            <div className="empty-note">
+              Оценочные нарушения этого типа показаны в блоке «Требует решения руководителя» ниже.
+            </div>
+          ) : violations.data && violations.data.length ? (
+            violations.data.map((v, i) => (
+              <ViolationRow
+                key={i}
+                v={v}
+                onTask={onTask}
+                taskPending={createTask.isPending}
+                taskDone={done.has(v.ref)}
+              />
+            ))
+          ) : (
+            <div className="empty-note">Нет нарушений этого типа</div>
+          )}
+        </div>
+      </div>
+
+      {showReviewCard ? (
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="card-h">
+            <h3>Требует решения руководителя</h3>
+            <span className="sub">оценочные нарушения — автоклассификации не поддаются</span>
+          </div>
+          <div className="deal-list">
+            {review.data?.map((v, i) => (
+              <ReviewRow key={i} v={v} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function ReviewRow({ v }: { v: import("@/api/monitor").Violation }) {
+  const { message } = App.useApp();
+  return (
+    <div className="deal">
+      <div className="lft" style={{ background: "var(--violet)" }} />
+      <div className="body">
+        <div className="name">
+          {v.name}
+          <span className={`tag ${v.kind_class}`}>{v.kind_label}</span>
+        </div>
+        <div className="meta">
+          <span>👤 {v.mgr}</span>
+          <span>◎ {v.src}</span>
+        </div>
+        <div className="ai-note">{v.ai}</div>
+      </div>
+      <div className="act" style={{ display: "flex", gap: 8 }}>
+        <Button size="small" onClick={() => message.success("Помечено как обоснованное")}>
+          Обоснованно
+        </Button>
+        <Button type="primary" size="small" onClick={() => message.success("Задача руководителю поставлена")}>
+          На разбор
+        </Button>
+      </div>
+    </div>
   );
 }

@@ -7,7 +7,7 @@ import "@fontsource/space-grotesk/600.css";
 import "@fontsource/space-grotesk/700.css";
 import "@/styles/global.css";
 
-import { ConfigProvider } from "antd";
+import { App as AntApp, ConfigProvider } from "antd";
 import ruRU from "antd/locale/ru_RU";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
@@ -27,9 +27,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <ConfigProvider theme={antdTheme} locale={ruRU}>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <AntApp>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </AntApp>
       </ConfigProvider>
     </QueryClientProvider>
   </React.StrictMode>,

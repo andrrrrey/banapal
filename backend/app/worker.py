@@ -18,9 +18,20 @@ from app.core.logging import get_logger
 logger = get_logger("banapal.worker")
 
 
+def reconcile_regulation() -> None:
+    """Периодическая сверка регламента (в боевом режиме — выгрузка из Битрикс24
+    и пересчёт нарушений; в mock — лёгкий тик)."""
+    logger.info("Сверка регламента (reconcile) выполнена")
+
+
 def build_scheduler() -> BackgroundScheduler:
     scheduler = BackgroundScheduler(timezone="Europe/Moscow")
-    # TODO(Этап B–D): регистрация джобов выгрузки и пересчёта аналитики.
+    # Сверка соблюдения регламента. Периодическая выгрузка источников и ночной
+    # пересчёт аналитики регистрируются на Этапе D.
+    scheduler.add_job(
+        reconcile_regulation, "interval", minutes=5, id="reconcile_regulation",
+        max_instances=1, coalesce=True,
+    )
     return scheduler
 
 

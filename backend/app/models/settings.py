@@ -36,3 +36,7 @@ class SettingsHistory(Base):
     value_from: Mapped[str] = mapped_column(String(128), default="—")
     value_to: Mapped[str] = mapped_column(String(128), default="—")
     crit: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Структурные данные для программного отката (у демо-записей отсутствуют).
+    path: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    raw_from: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    raw_to: Mapped[dict | None] = mapped_column(JSON, nullable=True)

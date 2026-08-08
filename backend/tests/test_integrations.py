@@ -16,7 +16,8 @@ def test_factory_returns_mock() -> None:
     try:
         adapter = factory.get_bitrix24()
         assert isinstance(adapter, MockBitrix24Adapter)
-        assert len(adapter.fetch_deals()) == 8
+        # 8 сделок дашборда + 4 только для мониторинга
+        assert len(adapter.fetch_deals()) == 12
     finally:
         settings.data_source = old
 

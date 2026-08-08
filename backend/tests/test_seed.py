@@ -33,6 +33,6 @@ def test_seed_is_idempotent() -> None:
         return deals, channels, words
 
     deals, channels, words = asyncio.run(run())
-    assert deals == 8
+    assert deals == 12  # 8 дашборд + 4 только для мониторинга
     assert channels == 5
     assert words == 247

@@ -21,9 +21,14 @@ class Deal(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # Показывать в таблице лидов дашборда (мониторинг оценивает все сделки).
+    on_dashboard: Mapped[bool] = mapped_column(Boolean, default=True)
+    ref: Mapped[str] = mapped_column(String(48), default="")  # «Лид #4821» / «Сделка #3390»
 
     name: Mapped[str] = mapped_column(String(255))
     src: Mapped[str] = mapped_column(String(64))
+    campaign: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    utm: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mgr: Mapped[str] = mapped_column(String(128))
 
     status_label: Mapped[str] = mapped_column(String(64))
@@ -47,6 +52,12 @@ class Deal(Base):
     stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     first_contact_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    stage_entered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_activity_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 

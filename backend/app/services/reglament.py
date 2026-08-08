@@ -1,0 +1,235 @@
+"""Детерминированный движок регламента (без LLM).
+
+По данным сделок (этап, метки времени, задачи, поля) и настройкам регламента
+вычисляет нарушения: просрочка первого контакта, зависшие сделки, лиды без
+повторного касания, сделки без задачи, незаполненные поля, дубли. Оценочные
+случаи (спам/отказ «для чистоты воронки») подсвечиваются эвристикой и выносятся
+на решение руководителя — автоклассификации они не поддаются (раздел 3.1 ТЗ).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+
+from app.models import Deal
+from app.services.calendar import (
+    WorkSchedule,
+    business_minutes,
+    calendar_days,
+    format_business,
+    format_days,
+)
+
+TERMINAL_STAGES = {"Оплачено", "Успешно реализовано", "Отказ", "Спам"}
+NEW_STAGES = {"Новое обращение", "Новый заказ"}
+
+KIND = {
+    "overdue_contact": ("Просрочка первого контакта", "t-red"),
+    "no_task": ("Сделка без задачи", "t-amber"),
+    "stuck": ("Зависшая сделка", "t-red"),
+    "no_recontact": ("Лид без повторного касания", "t-amber"),
+    "fields": ("Не заполнены обязательные поля", "t-amber"),
+    "dup": ("Возможный дубль", "t-blue"),
+    "refusal": ("Отказ «для чистоты воронки»", "t-violet"),
+    "spam": ("Подозрительный перевод в «Спам»", "t-violet"),
+}
+
+# Этап сделки → правило задачи (task_rules), определяющее обязательность задачи.
+STAGE_TASK_RULE = {
+    "Новое обращение": "Новый лид",
+    "Новый заказ": "Новый лид",
+    "Квалификация": "Квалификация",
+    "Ожидание заказа": "КП отправлено",
+    "Счёт на предоплату": "Счёт выставлен",
+}
+
+# Короткие подписи обязательных полей и предикаты их заполнения.
+_FIELD_SHORT = {"Сумма сделки": "Сумма", "UTM-метки": "UTM"}
+RECONTACT_DAYS = 2
+
+
+@dataclass
+class Config:
+    """Разобранные настройки регламента."""
+
+    first_contact_min: int
+    stuck_days: int
+    task_rules: dict[str, bool]
+    req_fields: list[str]
+    dup_key: str
+    schedule: WorkSchedule
+    highlight_spam: bool
+    highlight_refusal: bool
+
+    @classmethod
+    def parse(cls, data: dict) -> Config:
+        thresholds = {t["n"]: t for t in data.get("thresholds", [])}
+        fc = thresholds.get("Первый контакт", {}).get("v", 15)
+        task_rules = {r["n"]: bool(r["on"]) for r in data.get("task_rules", [])}
+        req_fields = [name for name, on in data.get("req_fields", []) if on]
+        evaluative = data.get("evaluative", {})
+        return cls(
+            first_contact_min=int(fc),
+            stuck_days=int(evaluative.get("stuck_days", 5)),
+            task_rules=task_rules,
+            req_fields=req_fields,
+            dup_key=data.get("dup_rule", {}).get("value", "По номеру телефона"),
+            schedule=WorkSchedule.from_config(data.get("schedule")),
+            highlight_spam=bool(evaluative.get("highlight_spam", True)),
+            highlight_refusal=bool(evaluative.get("highlight_refusal", True)),
+        )
+
+
+def _has_open_task(deal: Deal) -> bool:
+    return any(t.status == "open" for t in deal.tasks)
+
+
+def _missing_fields(deal: Deal, req_fields: list[str]) -> list[str]:
+    present = {
+        "Телефон": bool(deal.phone),
+        "Источник": bool(deal.src),
+        "UTM-метки": bool(deal.utm),
+        "Сумма сделки": deal.amount > 0,
+        "Ответственный": bool(deal.mgr) and deal.mgr != "—",
+        "Товар / бренд": True,
+        "Регион": True,
+        "Комментарий": True,
+    }
+    return [_FIELD_SHORT.get(f, f) for f in req_fields if not present.get(f, True)]
+
+
+def _dup_value(deal: Deal, dup_key: str) -> str | None:
+    if "e-mail" in dup_key and "телефон" not in dup_key:
+        return deal.email
+    return deal.phone
+
+
+def _mk(deal: Deal, ptype: str, *, over: bool, sla: str, norm: str, amount: int, ai: str,
+        category: str = "regular") -> dict:
+    label, cls = KIND[ptype]
+    severity = "review" if category == "review" else ("over" if over else "warn")
+    return {
+        "severity": severity, "category": category, "ptype": ptype,
+        "kind_label": label, "kind_class": cls,
+        "name": f"{deal.name} · {deal.ref}" if deal.ref else deal.name,
+        "ref": deal.ref, "mgr": deal.mgr, "src": deal.campaign or deal.src,
+        "norm": norm, "sla": sla, "over": over, "amount": amount, "ai": ai,
+    }
+
+
+def evaluate(deals: list[Deal], config_data: dict, now: datetime) -> dict:
+    """Возвращает {'regular': [...], 'review': [...]} нарушений."""
+    cfg = Config.parse(config_data)
+    sched = cfg.schedule
+
+    # Карта телефонов для поиска дублей (первая встреченная сделка — эталон).
+    seen_key: dict[str, Deal] = {}
+    for d in sorted(deals, key=lambda x: x.position):
+        if d.stage in TERMINAL_STAGES:
+            continue
+        key = _dup_value(d, cfg.dup_key)
+        if key and key not in seen_key:
+            seen_key[key] = d
+
+    regular: list[dict] = []
+    review: list[dict] = []
+
+    for deal in sorted(deals, key=lambda x: x.position):
+        stage = deal.stage or ""
+        terminal = stage in TERMINAL_STAGES
+
+        # --- Оценочные (эвристика, решение за руководителем) ---
+        if stage == "Отказ" and cfg.highlight_refusal and not deal.call:
+            if deal.created_at and deal.last_activity_at:
+                if business_minutes(deal.created_at, deal.last_activity_at, sched) < 10:
+                    review.append(_mk(
+                        deal, "refusal", over=False, sla="—", norm="", amount=0,
+                        category="review",
+                        ai="Отказ проставлен вскоре после лида без звонка. "
+                           "Автоклассификации не поддаётся — вынесено на проверку.",
+                    ))
+                    continue
+        if stage == "Спам" and cfg.highlight_spam and deal.call:
+            review.append(_mk(
+                deal, "spam", over=False, sla="—", norm="", amount=0, category="review",
+                ai="Был активный диалог, затем перевод в «Спам». Похоже на «чистку "
+                   "воронки». Решение — за руководителем.",
+            ))
+            continue
+
+        if terminal:
+            continue
+
+        # --- Регулярные нарушения (приоритет сверху вниз, одно на сделку) ---
+        # 1. Просрочка первого контакта
+        if stage in NEW_STAGES and deal.first_contact_at is None and deal.created_at:
+            elapsed = business_minutes(deal.created_at, now, sched)
+            if elapsed >= cfg.first_contact_min:
+                el = format_business(elapsed, sched)
+                regular.append(_mk(
+                    deal, "overdue_contact", over=elapsed > cfg.first_contact_min,
+                    sla=el, norm=f"норматив {cfg.first_contact_min} мин", amount=0,
+                    ai=f"Лид в рабочее время, первого контакта нет {el}. "
+                       "Требуется немедленный звонок.",
+                ))
+                continue
+
+        # 2. Зависшая сделка (нет движения по этапу дольше норматива)
+        if deal.stage_entered_at:
+            days = calendar_days(deal.stage_entered_at, now)
+            if days > cfg.stuck_days:
+                regular.append(_mk(
+                    deal, "stuck", over=True, sla=format_days(days),
+                    norm=f"без движения {days} дн · норматив {cfg.stuck_days}",
+                    amount=deal.amount,
+                    ai="Нет движения по этапу и повторных касаний. Высокий риск потери.",
+                ))
+                continue
+
+        # 3. Сделка без задачи на этапе, где задача обязательна
+        rule_name = STAGE_TASK_RULE.get(stage)
+        if rule_name and cfg.task_rules.get(rule_name) and not _has_open_task(deal):
+            elapsed = business_minutes(deal.stage_entered_at or deal.created_at or now, now, sched)
+            regular.append(_mk(
+                deal, "no_task", over=elapsed > sched.day_minutes(),
+                sla=format_business(elapsed, sched), norm=f"этап «{stage}»",
+                amount=deal.amount,
+                ai="На этапе, где задача обязательна по регламенту, задача отсутствует.",
+            ))
+            continue
+
+        # 4. Лид без повторного касания
+        if stage not in NEW_STAGES and deal.first_contact_at and deal.last_activity_at:
+            days = calendar_days(deal.last_activity_at, now)
+            if days >= RECONTACT_DAYS:
+                regular.append(_mk(
+                    deal, "no_recontact", over=False, sla=format_days(days),
+                    norm=f"{format_days(days)} без касания", amount=deal.amount,
+                    ai="Первый контакт был, дальнейших касаний нет.",
+                ))
+                continue
+
+        # 5. Возможный дубль
+        key = _dup_value(deal, cfg.dup_key)
+        if key and seen_key.get(key) is not deal:
+            other = seen_key[key]
+            regular.append(_mk(
+                deal, "dup", over=False, sla="—",
+                norm=f"совпадение телефона с {other.ref}", amount=0,
+                ai=f"Телефон совпадает с существующей сделкой ({other.ref}). "
+                   "Проверьте объединение.",
+            ))
+            continue
+
+        # 6. Не заполнены обязательные поля
+        missing = _missing_fields(deal, cfg.req_fields)
+        if missing:
+            regular.append(_mk(
+                deal, "fields", over=False, sla="—",
+                norm=f"нет: {', '.join(missing)}", amount=0,
+                ai="Без обязательных полей сделка не попадёт в расчёт выручки и маржи.",
+            ))
+            continue
+
+    return {"regular": regular, "review": review}

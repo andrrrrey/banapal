@@ -42,7 +42,8 @@ async def history(session: AsyncSession) -> list[dict]:
         select(SettingsHistory).order_by(SettingsHistory.position)
     )).scalars().all()
     return [
-        {"dt": r.dt, "user": r.user, "param": r.param,
-         "from": r.value_from, "to": r.value_to, "crit": r.crit}
+        {"id": r.id, "dt": r.dt, "user": r.user, "param": r.param,
+         "from": r.value_from, "to": r.value_to, "crit": r.crit,
+         "can_rollback": bool(r.path)}
         for r in rows
     ]

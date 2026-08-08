@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, ai, analytics, auth, dashboard, health, monitor, romi
+from app.api import admin, ai, analytics, auth, dashboard, health, monitor, romi, webhooks
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.logging import get_logger
@@ -67,3 +67,4 @@ app.include_router(analytics.router, prefix=api_prefix)
 app.include_router(romi.router, prefix=api_prefix)
 app.include_router(ai.router, prefix=api_prefix)
 app.include_router(admin.router, prefix=api_prefix)
+app.include_router(webhooks.router, prefix=api_prefix)

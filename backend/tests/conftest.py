@@ -57,8 +57,15 @@ def client(engine, session_maker):
             yield session
 
     app.dependency_overrides[get_session] = override_get_session
-    # Отключаем авто-сид на старте (данные уже загружены в тестовую БД).
-    settings.data_source = "real"
+    # Данные уже загружены в тестовую БД; отключаем авто-сид на старте,
+    # сохраняя DATA_SOURCE=mock (детерминированный MOCK_NOW для мониторинга).
+    settings.data_source = "mock"
+    import app.main as main_module
+
+    async def _noop() -> None:
+        return None
+
+    main_module._autoseed_if_needed = _noop
 
     with TestClient(app) as c:
         resp = c.post("/api/auth/login", json={"login": "admin", "password": "admin"})

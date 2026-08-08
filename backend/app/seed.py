@@ -39,8 +39,9 @@ from app.seeds.budget_recs import BUDGET_RECS
 from app.seeds.insights import INSIGHTS
 from app.seeds.kpi import BASE, KPI_CARDS
 from app.seeds.minus_words import build_minus_words
-from app.seeds.monitor import MANAGERS_CTRL, MONITOR, REVIEW
+from app.seeds.monitor import MANAGERS_CTRL
 from app.seeds.regulation import HISTORY, REGULATION
+from app.services.clock import to_msk
 
 logger = get_logger("banapal.seed")
 
@@ -60,7 +61,6 @@ async def seed_all(session: AsyncSession) -> None:
 
     _seed_deals(session)
     _seed_channels(session)
-    _seed_violations(session)
     _seed_managers(session)
     _seed_kpi(session)
     _seed_insights(session)
@@ -74,15 +74,28 @@ async def seed_all(session: AsyncSession) -> None:
 
 def _seed_deals(session: AsyncSession) -> None:
     for i, row in enumerate(factory.get_bitrix24().fetch_deals()):
-        session.add(Deal(
-            position=i,
-            name=row["name"], src=row["src"], mgr=row["mgr"],
+        deal = Deal(
+            position=i, on_dashboard=row.get("on_dashboard", True), ref=row.get("ref", ""),
+            name=row["name"], src=row["src"], campaign=row.get("campaign"), utm=row.get("utm"),
+            mgr=row["mgr"],
             status_label=row["status"][0], status_class=row["status"][1],
             first_contact=row["fc"],
             call=bool(row["call"]), invoice=bool(row["inv"]), paid=bool(row["pay"]),
             amount=row["sum"], risk=row["risk"], tags=row["tags"],
             ai_comment=row["ai"], refuse_reason=row["reason"],
-        ))
+            phone=row.get("phone"), stage=row.get("stage"),
+            created_at=to_msk(row.get("created")),
+            first_contact_at=to_msk(row.get("first_contact")),
+            stage_entered_at=to_msk(row.get("stage_entered")),
+            last_activity_at=to_msk(row.get("last_activity")),
+        )
+        if row.get("has_task"):
+            deal.tasks.append(Task(
+                title=f"Связаться по сделке «{row['name']}»",
+                assignee=row["mgr"] if row["mgr"] != "—" else None,
+                status="open",
+            ))
+        session.add(deal)
 
 
 def _seed_channels(session: AsyncSession) -> None:
@@ -99,23 +112,6 @@ def _seed_channels(session: AsyncSession) -> None:
                 revenue=camp["revenue"], margin=camp["margin"],
             ))
         session.add(channel)
-
-
-def _seed_violations(session: AsyncSession) -> None:
-    for i, v in enumerate(MONITOR):
-        session.add(Violation(
-            position=i, category="regular", severity=v["t"], ptype=v["ptype"],
-            kind_label=v["kind"][0], kind_class=v["kind"][1], name=v["name"],
-            mgr=v["mgr"], src=v["src"], norm=v["norm"], sla=v["sla"],
-            over=v["over"], amount=v["amount"], ai_comment=v["ai"],
-        ))
-    for i, r in enumerate(REVIEW):
-        session.add(Violation(
-            position=i, category="review", severity="review", ptype=r["ptype"],
-            kind_label=r["kind"][0], kind_class=r["kind"][1], name=r["name"],
-            mgr=r["mgr"], src=r["src"], norm="", sla="—",
-            over=False, amount=0, ai_comment=r["ai"],
-        ))
 
 
 def _seed_managers(session: AsyncSession) -> None:

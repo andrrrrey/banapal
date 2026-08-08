@@ -14,3 +14,6 @@ class RealBitrix24Adapter:
 
     def fetch_tasks(self) -> list[dict]:
         raise NotImplementedError(_MSG)
+
+    def create_task(self, payload: dict) -> dict:
+        raise NotImplementedError(_MSG)
