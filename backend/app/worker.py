@@ -36,9 +36,22 @@ def ingest_sources() -> None:
 def recompute_analytics() -> None:
     """Ночной пересчёт сквозной аналитики и ROMI по методике (раздел 4 ТЗ).
 
-    В mock демо-данные статичны — пересчёт не требуется.
+    В боевом режиме выгружает источники и пересобирает витрины; в mock демо-данные
+    статичны — пересчёт не требуется.
     """
-    logger.info("Ночной пересчёт аналитики — mock, пропущено")
+    from app.core.config import settings
+
+    if settings.data_source != "real":
+        logger.info("Ночной пересчёт аналитики — mock, пропущено")
+        return
+    try:
+        import asyncio
+
+        from app.services import ingest as ingest_mod
+
+        asyncio.run(ingest_mod.main())
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Ночной пересчёт аналитики: ошибка %s", exc)
 
 
 def refresh_ai_insights() -> None:

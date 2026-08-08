@@ -46,6 +46,19 @@ docker compose up --build
 Сервисы: `db` (PostgreSQL), `api` (FastAPI), `worker` (планировщик),
 `web` (nginx: собранный фронтенд + прокси `/api`).
 
+## Развёртывание на VPS (production, HTTPS)
+
+Полная пошаговая инструкция для домена **banapal.futuguru.com** —
+**[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Кратко:
+
+```bash
+cp .env.example .env && nano .env         # домен, пароли, ключи API
+./scripts/init-letsencrypt.sh             # выпуск TLS-сертификата Let's Encrypt
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Куда вносить каждый API-ключ — **[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)**.
+
 ## Режим разработки
 
 ```bash
@@ -88,9 +101,16 @@ cd frontend && npm install && npm run build
 | Этап | Содержание | Статус |
 |------|------------|--------|
 | A | Каркас, Docker, аутентификация, 6 разделов-заготовок | ✅ готово |
-| B | Модели БД, адаптеры интеграций + мок-данные, API | — |
-| C | Мониторинг Битрикс24, движок регламента, админ-панель | — |
-| D | Сквозная аналитика, ROMI, AI-слой, наполнение дашборда | — |
-| E | Боевые интеграции, TLS/домен, развёртывание, приёмка | — |
+| B | Модели БД, адаптеры интеграций + мок-данные, API | ✅ готово |
+| C | Мониторинг Битрикс24, движок регламента, админ-панель | ✅ готово |
+| D | Сквозная аналитика, ROMI, AI-слой, наполнение дашборда | ✅ готово |
+| E | Боевые интеграции, TLS/домен, развёртывание, приёмка | ✅ готово |
 
-Полный план — `plan/` (внутренний документ разработки).
+## Документация
+
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — развёртывание на VPS (домен, HTTPS)
+- [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) — API-ключи: где взять и куда вносить
+- [docs/ADMIN.md](docs/ADMIN.md) — эксплуатация (бэкапы, логи, обновление)
+- [docs/ROMI_METHODOLOGY.md](docs/ROMI_METHODOLOGY.md) — методика ROMI/маржи/НДС
+- [docs/DB_SCHEMA.md](docs/DB_SCHEMA.md) — схема базы данных
+- [docs/ACCEPTANCE_CHECKLIST.md](docs/ACCEPTANCE_CHECKLIST.md) — чек-лист приёмки

@@ -22,16 +22,20 @@ def test_factory_returns_mock() -> None:
         settings.data_source = old
 
 
-def test_factory_returns_real_stub() -> None:
+def test_factory_returns_real_adapter() -> None:
     old = settings.data_source
+    old_hook = settings.bitrix24_webhook_url
     settings.data_source = "real"
+    settings.bitrix24_webhook_url = ""
     try:
         adapter = factory.get_bitrix24()
         assert isinstance(adapter, RealBitrix24Adapter)
-        with pytest.raises(NotImplementedError):
+        # Без настроенного вебхука боевой адаптер сообщает об отсутствии конфигурации.
+        with pytest.raises(RuntimeError):
             adapter.fetch_deals()
     finally:
         settings.data_source = old
+        settings.bitrix24_webhook_url = old_hook
 
 
 def test_all_sources_have_factory() -> None:
