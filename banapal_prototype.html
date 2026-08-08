@@ -1,0 +1,1818 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Banapal · AI-контроль лидов и маркетинговая аналитика</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#F6F7FB; --card:#FFFFFF; --ink:#0E1526; --muted:#6B7488; --faint:#9AA1B1;
+  --line:#EBEDF3; --line2:#F1F2F7;
+  --primary:#635BFF; --primary-d:#4B45D6; --primary-soft:#EEEEFF;
+  --green:#12B76A; --green-soft:#E7F7EF;
+  --amber:#F79009; --amber-soft:#FEF3E2;
+  --red:#F04438; --red-soft:#FEECEB;
+  --violet:#9E77ED; --violet-soft:#F2ECFC;
+  --cyan:#1BA9C7;
+  --shadow:0 1px 2px rgba(16,24,40,.04), 0 8px 24px -12px rgba(16,24,40,.12);
+  --shadow-lg:0 12px 40px -12px rgba(16,24,40,.22);
+  --r:16px; --r-sm:11px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:var(--bg); color:var(--ink); font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased; overflow:hidden;
+}
+.num{font-family:'Space Grotesk','Inter',sans-serif; font-feature-settings:"tnum"; letter-spacing:-.01em}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#D8DCE6;border-radius:8px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:#C3C8D6}
+
+/* ---------- Shell ---------- */
+.app{display:grid;grid-template-columns:248px 1fr;height:100vh}
+.sidebar{
+  background:#0E1526; color:#C6CBDA; display:flex;flex-direction:column;
+  padding:20px 14px; position:relative; z-index:20;
+}
+.brand{display:flex;align-items:center;gap:11px;padding:6px 8px 20px}
+.logo{
+  width:38px;height:38px;border-radius:11px;flex:none;
+  background:linear-gradient(135deg,var(--primary),var(--violet));
+  display:grid;place-items:center;color:#fff;font-weight:700;font-family:'Space Grotesk';
+  font-size:19px;box-shadow:0 6px 18px -6px rgba(99,91,255,.7)
+}
+.brand b{color:#fff;font-size:15.5px;font-weight:600;letter-spacing:-.01em;display:block;line-height:1.15}
+.brand span{font-size:11px;color:#7B839A}
+.nav{display:flex;flex-direction:column;gap:3px;margin-top:6px}
+.nav-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:#5B637A;padding:14px 10px 6px;font-weight:600}
+.nav a{
+  display:flex;align-items:center;gap:11px;padding:9.5px 11px;border-radius:10px;
+  color:#AEB4C6;text-decoration:none;font-size:13.5px;font-weight:500;cursor:pointer;
+  transition:background .15s,color .15s; position:relative
+}
+.nav a svg{width:18px;height:18px;flex:none;stroke-width:1.9}
+.nav a:hover{background:#1A2234;color:#E8EAF2}
+.nav a.active{background:linear-gradient(100deg,#232C42,#1A2234);color:#fff}
+.nav a.active::before{content:"";position:absolute;left:-14px;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:var(--primary)}
+.nav a .badge{margin-left:auto;background:var(--red);color:#fff;font-size:10.5px;font-weight:700;
+  min-width:19px;height:19px;border-radius:10px;display:grid;place-items:center;padding:0 5px}
+.side-foot{margin-top:auto;padding:14px 10px 4px;border-top:1px solid #1D2537;font-size:11px;color:#6B7488;line-height:1.6}
+.side-foot b{color:#AEB4C6;font-weight:600}
+
+.main{display:flex;flex-direction:column;overflow:hidden}
+
+/* ---------- Topbar ---------- */
+.topbar{
+  background:rgba(246,247,251,.82);backdrop-filter:saturate(1.4) blur(8px);
+  border-bottom:1px solid var(--line); padding:15px 28px;display:flex;align-items:center;gap:18px;flex:none;z-index:10
+}
+.page-title h1{font-size:19px;font-weight:600;letter-spacing:-.02em}
+.page-title p{font-size:12.5px;color:var(--muted);margin-top:1px}
+.topbar .spacer{flex:1}
+.demo-pill{display:flex;align-items:center;gap:7px;background:var(--violet-soft);color:#6D4BB8;
+  font-size:12px;font-weight:600;padding:6px 12px;border-radius:20px;border:1px solid #E4D8F7}
+.demo-pill .dot{width:6px;height:6px;border-radius:50%;background:var(--violet);box-shadow:0 0 0 3px rgba(158,119,237,.2)}
+.clock{font-size:12.5px;color:var(--muted);text-align:right;line-height:1.35}
+.clock b{color:var(--ink);font-weight:600}
+
+/* ---------- Filter bar ---------- */
+.filterbar{padding:14px 28px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:none;border-bottom:1px solid var(--line2)}
+.seg{display:flex;background:#EDEFF5;border-radius:10px;padding:3px}
+.seg button{border:none;background:transparent;font-family:inherit;font-size:12.5px;font-weight:500;color:var(--muted);
+  padding:6px 13px;border-radius:7px;cursor:pointer;transition:.15s}
+.seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(16,24,40,.09);font-weight:600}
+.selwrap{position:relative}
+.sel{appearance:none;border:1px solid var(--line);background:#fff;font-family:inherit;font-size:12.5px;color:var(--ink);
+  padding:8px 30px 8px 12px;border-radius:9px;cursor:pointer;font-weight:500;transition:.15s}
+.sel:hover{border-color:#D3D7E2}
+.selwrap::after{content:"";position:absolute;right:11px;top:50%;transform:translateY(-60%) rotate(45deg);
+  width:6px;height:6px;border-right:2px solid var(--faint);border-bottom:2px solid var(--faint);pointer-events:none}
+.filterbar .spacer{flex:1}
+.btn{border:1px solid var(--line);background:#fff;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--ink);
+  padding:8px 14px;border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:.15s}
+.btn:hover{border-color:#D3D7E2;background:#FBFBFD}
+.btn svg{width:15px;height:15px}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.primary:hover{background:var(--primary-d)}
+.btn.sm{padding:6px 11px;font-size:12px}
+
+/* ---------- Content ---------- */
+.content{overflow-y:auto;padding:22px 28px 60px;flex:1}
+.page{display:none;animation:fade .35s ease}
+.page.show{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.grid{display:grid;gap:16px}
+.kpis{grid-template-columns:repeat(4,1fr)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+.card-p{padding:18px}
+.card-h{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line2)}
+.card-h h3{font-size:14.5px;font-weight:600}
+.card-h .sub{font-size:12px;color:var(--muted);font-weight:400}
+
+/* KPI */
+.kpi{padding:17px 18px;position:relative;overflow:hidden}
+.kpi .top{display:flex;align-items:center;gap:9px;margin-bottom:11px}
+.kpi .ic{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;flex:none}
+.kpi .ic svg{width:16px;height:16px;stroke-width:2}
+.kpi .lab{font-size:12.5px;color:var(--muted);font-weight:500}
+.kpi .val{font-size:27px;font-weight:600;letter-spacing:-.02em;line-height:1}
+.kpi .val small{font-size:15px;color:var(--muted);font-weight:500;margin-left:3px}
+.kpi .foot{display:flex;align-items:center;gap:6px;margin-top:9px;font-size:12px}
+.chip{display:inline-flex;align-items:center;gap:3px;font-weight:600;padding:2px 7px;border-radius:20px;font-size:11.5px}
+.chip.up{background:var(--green-soft);color:#0A8A50}
+.chip.down{background:var(--red-soft);color:#C6362B}
+.chip.warn{background:var(--amber-soft);color:#B45D07}
+.kpi .foot .vs{color:var(--faint)}
+.spark{position:absolute;right:14px;bottom:14px;opacity:.9}
+
+.i-indigo{background:var(--primary-soft);color:var(--primary)}
+.i-green{background:var(--green-soft);color:var(--green)}
+.i-amber{background:var(--amber-soft);color:var(--amber)}
+.i-violet{background:var(--violet-soft);color:var(--violet)}
+.i-red{background:var(--red-soft);color:var(--red)}
+.i-cyan{background:#E1F4F9;color:var(--cyan)}
+
+.chart{width:100%}
+.two{grid-template-columns:1.6fr 1fr}
+.two-b{grid-template-columns:1fr 1fr}
+.three{grid-template-columns:1fr 1fr 1fr}
+
+/* ---------- Money chain (signature) ---------- */
+.chain{display:flex;align-items:stretch;gap:0;padding:26px 20px 22px;overflow-x:auto}
+.chain-step{flex:1;min-width:120px;position:relative;display:flex;flex-direction:column;align-items:center;text-align:center}
+.chain-bar{width:100%;border-radius:12px;color:#fff;padding:16px 10px 15px;position:relative;transition:transform .2s}
+.chain-step:hover .chain-bar{transform:translateY(-3px)}
+.chain-bar .cn{font-size:23px;font-weight:600;letter-spacing:-.02em}
+.chain-bar .cl{font-size:11.5px;opacity:.92;margin-top:3px;font-weight:500}
+.chain-bar .csub{font-size:10.5px;opacity:.78;margin-top:2px}
+.chain-arrow{position:absolute;right:-11px;top:50%;transform:translateY(-50%);z-index:3;color:#C3C8D6}
+.chain-arrow svg{width:22px;height:22px}
+.chain-conv{font-size:11px;color:var(--muted);margin-top:9px;font-weight:500}
+.chain-conv b{color:var(--ink)}
+
+/* ---------- Table ---------- */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);
+  font-weight:600;padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap;background:#FBFBFD;position:sticky;top:0}
+tbody td{padding:12px 14px;border-bottom:1px solid var(--line2);white-space:nowrap;vertical-align:middle}
+tbody tr:last-child td{border-bottom:none}
+tbody tr.click{cursor:pointer;transition:background .12s}
+tbody tr.click:hover{background:#FAFAFE}
+.mgr{display:inline-flex;align-items:center;gap:8px}
+.ava{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:11px;font-weight:600;flex:none}
+.money{font-weight:600}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:7px;white-space:nowrap}
+.t-green{background:var(--green-soft);color:#0A8A50}
+.t-amber{background:var(--amber-soft);color:#B45D07}
+.t-red{background:var(--red-soft);color:#C6362B}
+.t-gray{background:#EEF0F5;color:#5A6376}
+.t-blue{background:var(--primary-soft);color:var(--primary-d)}
+.t-violet{background:var(--violet-soft);color:#6D4BB8}
+.dot-ok{width:8px;height:8px;border-radius:50%;display:inline-block}
+.ai-cell{color:#6D4BB8;font-size:12.5px;display:flex;align-items:center;gap:6px;white-space:normal;max-width:280px}
+.ai-cell svg{width:14px;height:14px;flex:none;color:var(--violet)}
+
+.expand-row td{background:#FBFAFF;padding:0}
+.exp-inner{padding:4px 14px 6px 44px}
+.exp-inner table{font-size:12.5px}
+.exp-inner thead th{background:transparent}
+.caret{display:inline-block;transition:transform .2s;color:var(--faint);width:14px}
+tr.open .caret{transform:rotate(90deg)}
+
+/* ---------- Monitoring ---------- */
+.mon-stats{grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px}
+.mstat{padding:14px 15px;border-radius:14px;border:1px solid var(--line);background:#fff;box-shadow:var(--shadow)}
+.mstat .mn{font-size:24px;font-weight:600;letter-spacing:-.02em}
+.mstat .ml{font-size:11.5px;color:var(--muted);margin-top:3px;display:flex;align-items:center;gap:6px}
+.mstat .ml::before{content:"";width:8px;height:8px;border-radius:50%;flex:none}
+.mstat.r .ml::before{background:var(--red)} .mstat.a .ml::before{background:var(--amber)}
+.mstat.g .ml::before{background:var(--green)} .mstat.b .ml::before{background:var(--primary)}
+.mstat.v .ml::before{background:var(--violet)}
+
+.live{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:#0A8A50}
+.live .p{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1.6s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(18,183,106,.5)}70%{box-shadow:0 0 0 7px rgba(18,183,106,0)}100%{box-shadow:0 0 0 0 rgba(18,183,106,0)}}
+
+.deal-list{display:flex;flex-direction:column}
+.deal{display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--line2);transition:background .12s}
+.deal:last-child{border-bottom:none}
+.deal:hover{background:#FAFAFE}
+.deal .lft{flex:none;width:4px;align-self:stretch;border-radius:4px;margin:2px 0}
+.deal .body{flex:1;min-width:0}
+.deal .name{font-weight:600;font-size:13.5px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.deal .meta{font-size:12px;color:var(--muted);margin-top:4px;display:flex;gap:14px;flex-wrap:wrap}
+.deal .meta span{display:inline-flex;align-items:center;gap:5px}
+.sla{text-align:right;flex:none;min-width:96px}
+.sla .t{font-family:'Space Grotesk';font-size:16px;font-weight:600}
+.sla .l{font-size:10.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin-top:1px}
+.sla.over .t{color:var(--red)} .sla.warn .t{color:var(--amber)} .sla.ok .t{color:var(--green)}
+.deal .act{flex:none}
+.ai-note{background:var(--violet-soft);border-left:2px solid var(--violet);border-radius:0 8px 8px 0;
+  padding:8px 12px;font-size:12.5px;color:#5A4494;margin-top:10px;display:flex;gap:8px}
+.ai-note svg{width:15px;height:15px;flex:none;color:var(--violet);margin-top:1px}
+
+/* ---------- Recommendations ---------- */
+.rec{padding:17px 18px;border-radius:14px;border:1px solid var(--line);background:#fff;box-shadow:var(--shadow);display:flex;gap:14px}
+.rec .ric{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex:none}
+.rec .ric svg{width:19px;height:19px}
+.rec h4{font-size:14px;font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.rec p{font-size:13px;color:#4A5364;line-height:1.55}
+.rec .why{font-size:12px;color:var(--muted);margin-top:8px;background:#FAFAFB;border:1px solid var(--line2);border-radius:9px;padding:8px 11px}
+.rec .why b{color:var(--ink)}
+.depchip{font-size:10.5px;font-weight:600;color:#B45D07;background:var(--amber-soft);border:1px solid #FAE3C0;
+  padding:2px 8px;border-radius:6px}
+.datagap{display:flex;gap:14px;align-items:flex-start;padding:16px 18px;border-radius:14px;
+  background:#FBFBFD;border:1px dashed #D3D7E2;box-shadow:none}
+.datagap .dg-ic{width:34px;height:34px;border-radius:10px;flex:none;display:grid;place-items:center;background:#EEF0F5;color:#6B7488}
+.datagap h4{font-size:13.5px;font-weight:600;margin-bottom:4px}
+.datagap p{font-size:12.5px;color:#5A6376;line-height:1.55}
+.nodata{color:var(--faint);font-style:normal;font-size:12px}
+
+/* ---- Attention (triage) ---- */
+.att-grid{padding:16px 18px}
+.att-head{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
+.att-money,.att-leads{border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:2px;position:relative;overflow:hidden;transition:transform .15s,box-shadow .15s;cursor:pointer}
+.att-money{background:linear-gradient(120deg,#FEECEB,#FFF6F5);border:1px solid #F8D6D2}
+.att-leads{background:linear-gradient(120deg,#FEF3E2,#FFFBF4);border:1px solid #F8E4C2}
+.att-money:hover,.att-leads:hover,.att-tile:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+.att-head .aml{font-size:12.5px;color:var(--muted);font-weight:500}
+.att-head .amv{font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.att-money .amv{color:#C6362B} .att-leads .amv{color:#B45D07}
+.att-head .ams{font-size:11.5px;color:var(--faint)}
+.att-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.att-tile{border:1px solid var(--line);border-radius:13px;padding:14px 15px;background:#fff;position:relative;transition:transform .15s,box-shadow .15s;cursor:pointer}
+.att-tile .att-ic{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;margin-bottom:9px}
+.att-tile .att-ic svg{width:16px;height:16px}
+.att-tile .att-n{font-size:24px;font-weight:600;letter-spacing:-.02em;line-height:1}
+.att-tile .att-l{font-size:13px;font-weight:600;margin-top:4px}
+.att-tile .att-s{font-size:11.5px;color:var(--muted);margin-top:2px;min-height:15px}
+.att-tile .att-go{font-size:11.5px;font-weight:600;margin-top:9px;opacity:0;transition:.15s}
+.att-tile:hover .att-go{opacity:1}
+.att-tile.red .att-ic{background:var(--red-soft);color:var(--red)} .att-tile.red{border-left:3px solid var(--red)} .att-tile.red .att-go{color:var(--red)}
+.att-tile.amber .att-ic{background:var(--amber-soft);color:var(--amber)} .att-tile.amber{border-left:3px solid var(--amber)} .att-tile.amber .att-go{color:var(--amber)}
+.att-tile.violet .att-ic{background:var(--violet-soft);color:var(--violet)} .att-tile.violet{border-left:3px solid var(--violet)} .att-tile.violet .att-go{color:var(--violet)}
+.att-tile.gray .att-ic{background:#EEF0F5;color:#6B7488} .att-tile.gray{border-left:3px solid #C3C8D6} .att-tile.gray .att-go{color:#6B7488}
+.attention .card-h .live{color:var(--muted);font-weight:500}
+
+/* ---- Lead priority / risk ---- */
+.risk-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;white-space:nowrap}
+.risk-pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.rk-high{background:var(--red-soft);color:#C6362B} .rk-mid{background:var(--amber-soft);color:#B45D07}
+.attr-wrap{display:inline-flex;flex-wrap:wrap;gap:4px;margin-left:5px;vertical-align:middle}
+.attr{font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:6px;background:#EEF0F5;color:#5A6376;white-space:nowrap}
+.tg-money{background:#E7F7EF;color:#0A8A50} .tg-repeat{background:var(--primary-soft);color:var(--primary-d)}
+.tg-hot{background:var(--red-soft);color:#C6362B} .tg-designer{background:var(--violet-soft);color:#6D4BB8}
+.tg-legal{background:#E1F4F9;color:#0E7C93}
+tr.rk-row-high td:first-child{box-shadow:inset 3px 0 0 var(--red)}
+tr.rk-row-mid td:first-child{box-shadow:inset 3px 0 0 var(--amber)}
+
+/* ---- Action badges ---- */
+.actbadge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:7px;white-space:nowrap;cursor:default}
+.act-scale{background:var(--green-soft);color:#0A8A50} .act-watch{background:var(--primary-soft);color:var(--primary-d)}
+.act-check{background:var(--amber-soft);color:#B45D07} .act-limit{background:var(--red-soft);color:#C6362B}
+.act-nodata{background:#EEF0F5;color:#6B7488}
+
+/* ---- Managers control ---- */
+.cnt-bad{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:var(--red-soft);color:#C6362B;font-weight:700;font-size:12px}
+
+/* ---- Money at risk in monitor ---- */
+.risk-amt{font-size:11.5px;font-weight:600;color:#C6362B;background:var(--red-soft);padding:2px 8px;border-radius:6px}
+.filterpill{display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:20px;padding:7px 8px 7px 14px;font-size:12.5px;color:var(--muted);box-shadow:var(--shadow)}
+.filterpill b{color:var(--ink)}
+.filterpill button{border:none;background:#F1F2F7;width:22px;height:22px;border-radius:50%;cursor:pointer;color:var(--muted);font-size:15px;line-height:1}
+.filterpill button:hover{background:#E7E9F0;color:var(--ink)}
+
+/* ---- Minus-words working table ---- */
+.mw-reason{font-size:12px;color:#5A6376}
+.conf-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.cf-hi{background:var(--green)} .cf-mid{background:var(--amber)}
+.msbadge{display:inline-flex;align-items:center;font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:20px;cursor:pointer;transition:.12s;user-select:none}
+.ms-new{background:var(--primary-soft);color:var(--primary-d)} .ms-ok{background:var(--green-soft);color:#0A8A50}
+.ms-rej{background:#EEF0F5;color:#6B7488} .ms-exp{background:var(--violet-soft);color:#6D4BB8}
+.msbadge:hover{filter:brightness(.97)}
+
+/* ---- History / save-diff ---- */
+.crit-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--amber);margin-left:5px;vertical-align:middle}
+.hist-from{font-size:12.5px;color:var(--muted);text-decoration:line-through;text-decoration-color:#C3C8D6}
+.hist-to{font-size:12.5px;color:#0A8A50;font-weight:600}
+.save-diff{background:#FBFBFD;border:1px solid var(--line);border-radius:12px;padding:6px 14px}
+.sd-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line2)}
+.sd-row:last-child{border-bottom:none}
+.sd-row .sd-p{flex:1;font-size:13px;font-weight:500}
+
+.kpi-click{cursor:pointer;transition:transform .15s,box-shadow .15s}
+.kpi-click:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+.kpi-click::after{content:"→";position:absolute;top:14px;right:14px;color:var(--faint);font-size:14px;opacity:0;transition:.15s}
+.kpi-click:hover::after{opacity:1}
+
+@media(max-width:1080px){.att-tiles{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){
+  .att-grid{padding:14px}
+  .att-head{grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+  .att-head .amv{font-size:22px}
+  .att-head .aml{font-size:11.5px}
+  .att-head .ams{display:none}
+  .att-money,.att-leads{padding:13px 14px}
+  .att-tiles{grid-template-columns:repeat(2,1fr);gap:10px}
+  .att-tile{padding:12px 13px}
+  .att-tile .att-go{opacity:1;margin-top:7px}
+  .att-tile .att-l{font-size:12.5px}
+}
+@media(max-width:380px){.att-head{grid-template-columns:1fr}}
+
+/* wide tables on phone: smooth scroll + sticky first column */
+.tbl-wrap{-webkit-overflow-scrolling:touch}
+@media(max-width:640px){
+  .mtable{min-width:640px}
+  .mtable thead th:first-child,
+  .mtable tbody td:first-child{
+    position:sticky;left:0;z-index:2;background:#fff;
+    box-shadow:6px 0 8px -6px rgba(16,24,40,.12);
+  }
+  .mtable thead th:first-child{background:#FBFBFD;z-index:3}
+  .mtable tbody tr.click:active td:first-child{background:#F4F4FF}
+  #leads-table tbody tr.rk-row-high td:first-child{box-shadow:inset 3px 0 0 var(--red),6px 0 8px -6px rgba(16,24,40,.12)}
+  #leads-table tbody tr.rk-row-mid td:first-child{box-shadow:inset 3px 0 0 var(--amber),6px 0 8px -6px rgba(16,24,40,.12)}
+  #rec-budget{grid-template-columns:1fr !important}
+}
+.rec-meta{display:flex;align-items:center;gap:12px;margin-top:11px;flex-wrap:wrap}
+.rec-src{display:flex;gap:6px;flex-wrap:wrap}
+.srcchip{font-size:10.5px;font-weight:600;color:#5A6376;background:#EEF0F5;border:1px solid var(--line);
+  padding:2px 8px;border-radius:6px;letter-spacing:.01em}
+.conf{font-size:11.5px;color:var(--muted)} .conf b{color:var(--ink);font-weight:600}
+.rec-act{display:flex;gap:8px;margin-top:13px;align-items:center;flex-wrap:wrap}
+.rec-act .impact{margin-left:auto}
+.impact{font-family:'Space Grotesk';font-weight:600}
+
+.export-card{display:flex;align-items:flex-start;gap:18px;padding:20px 22px}
+.export-card .ec-ic{width:52px;height:52px;border-radius:14px;flex:none;display:grid;place-items:center;
+  background:var(--green-soft);color:#0A8A50}
+.export-card .ec-body{flex:1;min-width:0}
+.export-card h3{font-size:15px;font-weight:600;margin-bottom:5px}
+.export-card p{font-size:13px;color:#4A5364;line-height:1.55;max-width:640px}
+.ec-stats{display:flex;gap:26px;margin-top:14px;flex-wrap:wrap}
+.ecs b{font-family:'Space Grotesk';font-size:20px;font-weight:600;display:block;letter-spacing:-.02em}
+.ecs span{font-size:11.5px;color:var(--muted)}
+.ec-act{flex:none;display:flex;flex-direction:column;align-items:center;gap:8px}
+.ec-note{font-size:11px;color:var(--faint)}
+@media(max-width:640px){.export-card{flex-direction:column;padding:16px}.ec-act{align-items:stretch;width:100%}.ec-act .btn{width:100%}.ec-stats{gap:16px}}
+.pill-add{border:1px solid var(--line);background:#fff;color:var(--primary);font-weight:600;font-size:12px;
+  padding:5px 12px;border-radius:20px;cursor:pointer;transition:.15s;font-family:inherit}
+.pill-add:hover{background:var(--primary-soft);border-color:var(--primary-soft)}
+.pill-add.added{background:var(--green-soft);color:#0A8A50;border-color:var(--green-soft);cursor:default}
+
+/* AI insights feed */
+.insight{padding:16px 18px;border-radius:14px;border:1px solid var(--line);background:#fff;box-shadow:var(--shadow);display:flex;gap:13px}
+.insight .iic{width:34px;height:34px;border-radius:10px;flex:none;display:grid;place-items:center}
+.insight .iic svg{width:17px;height:17px}
+.insight .ihead{display:flex;align-items:center;gap:9px;margin-bottom:5px}
+.insight .ihead b{font-size:13.5px}
+.insight .ihead .sev{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:.03em}
+.insight p{font-size:13px;color:#3E4658;line-height:1.6}
+.insight .time{font-size:11.5px;color:var(--faint);margin-left:auto;font-weight:500;white-space:nowrap}
+.i-surface{font-size:12px;color:var(--muted);margin:2px 0 9px;line-height:1.5;padding-left:11px;border-left:2px solid var(--line)}
+.i-surface span{font-weight:600;color:#8A92A6}
+.i-rec{display:flex;gap:9px;align-items:flex-start;margin-top:11px;background:var(--green-soft);border-radius:10px;padding:10px 13px}
+.i-rec svg{width:16px;height:16px;flex:none;color:#0A8A50;margin-top:1px}
+.i-rec span{font-size:12.5px;color:#0A6B41;font-weight:500;line-height:1.5}
+
+/* ---------- Admin ---------- */
+.admin-grid{grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+.setrow{display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid var(--line2)}
+.setrow:last-child{border-bottom:none}
+.setrow .st{flex:1}
+.setrow .st b{font-size:13.5px;font-weight:600;display:block}
+.setrow .st span{font-size:12px;color:var(--muted)}
+.stepper{display:flex;align-items:center;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.stepper button{border:none;background:#FBFBFD;width:30px;height:32px;font-size:16px;cursor:pointer;color:var(--muted);font-family:inherit}
+.stepper button:hover{background:#F1F2F7;color:var(--ink)}
+.stepper input{border:none;width:52px;text-align:center;font-family:'Space Grotesk';font-weight:600;font-size:13.5px;color:var(--ink);background:#fff}
+.stepper .unit{font-size:12px;color:var(--muted);padding:0 10px 0 0}
+.sw{position:relative;width:42px;height:24px;flex:none;cursor:pointer}
+.sw input{opacity:0;width:0;height:0}
+.sw .tr{position:absolute;inset:0;background:#D3D7E2;border-radius:20px;transition:.2s}
+.sw .tr::before{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.sw input:checked + .tr{background:var(--green)}
+.sw input:checked + .tr::before{transform:translateX(18px)}
+.chkline{display:flex;flex-wrap:wrap;gap:9px;margin-top:4px}
+.chk{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:12.5px;font-weight:500;transition:.15s;user-select:none}
+.chk:hover{border-color:#D3D7E2}
+.chk.on{background:var(--primary-soft);border-color:#D3D0FF;color:var(--primary-d);font-weight:600}
+.chk .bx{width:16px;height:16px;border-radius:5px;border:1.5px solid #C3C8D6;display:grid;place-items:center;transition:.15s}
+.chk.on .bx{background:var(--primary);border-color:var(--primary)}
+.chk .bx svg{width:11px;height:11px;color:#fff;opacity:0}
+.chk.on .bx svg{opacity:1}
+.field{margin-top:2px}
+.field label{font-size:12px;color:var(--muted);font-weight:500;display:block;margin-bottom:6px}
+.field input.txt,.field textarea,.field select.sel2{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 12px;
+  font-family:inherit;font-size:13px;color:var(--ink);background:#fff}
+.field textarea{resize:vertical;min-height:64px;line-height:1.5}
+.days{display:flex;gap:6px}
+.day{width:36px;height:34px;border-radius:8px;border:1px solid var(--line);display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;transition:.15s}
+.day.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+/* ---------- Modal ---------- */
+.overlay{position:fixed;inset:0;background:rgba(14,21,38,.42);backdrop-filter:blur(3px);z-index:100;
+  display:none;align-items:center;justify-content:center;padding:24px;animation:fade .2s}
+.overlay.show{display:flex}
+.modal{background:#fff;border-radius:18px;box-shadow:var(--shadow-lg);width:100%;max-width:540px;max-height:88vh;overflow:hidden;
+  display:flex;flex-direction:column;animation:pop .28s cubic-bezier(.2,.8,.3,1)}
+@keyframes pop{from{opacity:0;transform:scale(.96) translateY(8px)}to{opacity:1;transform:none}}
+.modal-h{padding:20px 22px;border-bottom:1px solid var(--line2);display:flex;align-items:flex-start;gap:12px}
+.modal-h .mtitle{flex:1}
+.modal-h h3{font-size:17px;font-weight:600}
+.modal-h p{font-size:12.5px;color:var(--muted);margin-top:2px}
+.xbtn{border:none;background:#F1F2F7;width:32px;height:32px;border-radius:9px;cursor:pointer;color:var(--muted);font-size:18px;flex:none;transition:.15s}
+.xbtn:hover{background:#E7E9F0;color:var(--ink)}
+.modal-b{padding:20px 22px;overflow-y:auto}
+.dl{display:grid;grid-template-columns:1fr 1fr;gap:14px 20px}
+.dl .di .k{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:600;margin-bottom:3px}
+.dl .di .v{font-size:14px;font-weight:500}
+.timeline{margin-top:18px;border-top:1px solid var(--line2);padding-top:16px}
+.timeline h4{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:12px}
+.tl{display:flex;gap:12px;padding-bottom:14px;position:relative}
+.tl:last-child{padding-bottom:0}
+.tl .tdot{width:10px;height:10px;border-radius:50%;flex:none;margin-top:4px;position:relative;z-index:2}
+.tl:not(:last-child)::before{content:"";position:absolute;left:4px;top:14px;bottom:-2px;width:2px;background:var(--line)}
+.tl .tc b{font-size:13px;font-weight:600;display:block}
+.tl .tc span{font-size:12px;color:var(--muted)}
+.tl .tc .tt{font-size:11px;color:var(--faint)}
+
+/* ---------- Toast ---------- */
+.toast-wrap{position:fixed;bottom:24px;right:24px;z-index:200;display:flex;flex-direction:column;gap:10px}
+.toast{background:#0E1526;color:#fff;padding:13px 17px;border-radius:12px;font-size:13px;font-weight:500;
+  box-shadow:var(--shadow-lg);display:flex;align-items:center;gap:11px;animation:slidein .3s cubic-bezier(.2,.8,.3,1);max-width:340px}
+@keyframes slidein{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+.toast .tic{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;flex:none}
+.toast .tic svg{width:14px;height:14px}
+.toast.ok .tic{background:rgba(18,183,106,.22);color:#3DDC84}
+.toast.ai .tic{background:rgba(158,119,237,.25);color:#C4A6F5}
+
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:2px}
+.legend span{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.legend i{width:9px;height:9px;border-radius:3px;display:inline-block}
+.empty-note{font-size:12.5px;color:var(--faint);text-align:center;padding:26px}
+
+.hamb{display:none;place-items:center}
+#side-backdrop{display:none;position:fixed;inset:0;background:rgba(14,21,38,.4);z-index:19}
+#side-backdrop.show{display:block}
+
+@media(max-width:1080px){
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .two,.two-b,.admin-grid{grid-template-columns:1fr}
+  .three{grid-template-columns:1fr}
+  .mon-stats{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:820px){
+  .app{grid-template-columns:1fr}
+  .sidebar{position:fixed;inset:0 auto 0 0;width:250px;transform:translateX(-100%);transition:transform .28s ease;z-index:40}
+  .sidebar.open{transform:none;box-shadow:var(--shadow-lg)}
+  .hamb{display:grid}
+}
+
+/* ---------- Phone ---------- */
+@media(max-width:640px){
+  body{font-size:13.5px}
+  .topbar{padding:11px 14px;gap:10px}
+  .page-title h1{font-size:16.5px}
+  .page-title p{display:none}
+  .topbar .demo-pill{padding:5px 9px;font-size:11px}
+  .topbar .demo-pill span:not(.dot){display:none}
+  .clock{display:none}
+
+  .filterbar{padding:10px 14px;gap:8px;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .filterbar::-webkit-scrollbar{display:none}
+  .filterbar .spacer{display:none}
+  .seg,.selwrap,.filterbar .btn{flex:none}
+  .seg button{padding:6px 10px}
+
+  .content{padding:14px 14px 48px}
+  .grid{gap:12px}
+  .kpis{grid-template-columns:repeat(2,1fr);gap:10px}
+  .kpi{padding:13px 14px}
+  .kpi .val{font-size:21px}
+  .kpi .spark{display:none}
+  .kpi .foot .vs{display:none}
+  .grid.two,.grid.two-b{margin-top:12px !important}
+  .mon-stats{grid-template-columns:repeat(2,1fr);gap:10px}
+  .mstat .mn{font-size:20px}
+
+  .card-h{padding:14px 15px;flex-wrap:wrap;gap:4px}
+  .card-h .sub{display:none}
+  .card-p{padding:14px}
+
+  /* vertical money-chain */
+  .chain{flex-direction:column;padding:16px 14px;gap:0;overflow:visible}
+  .chain-step{width:100%;flex-direction:row;align-items:center;gap:14px;min-width:0}
+  .chain-bar{width:auto;flex:1;display:flex !important;flex-direction:row !important;align-items:baseline;gap:8px;
+    height:auto !important;padding:14px 16px}
+  .chain-bar .cn{font-size:20px} .chain-bar .cl{font-size:12.5px;margin-top:0} .chain-bar .csub{margin-top:0}
+  .chain-conv{min-width:88px;text-align:left;margin-top:0;order:2;flex:none}
+  .chain-arrow{position:static;transform:rotate(90deg);order:3;margin:2px 0 2px 6px;flex:none}
+  .chain-step:last-child .chain-bar{background:linear-gradient(135deg,#12B76A,#0FA968) !important}
+
+  /* monitoring rows stack */
+  .deal{flex-direction:column;align-items:stretch;gap:10px;padding:14px 15px}
+  .deal .lft{display:none}
+  .deal .name{font-size:13px}
+  .deal .meta{gap:8px 12px;font-size:11.5px}
+  .deal .sla{text-align:left;min-width:0;display:flex;align-items:baseline;gap:8px}
+  .deal .sla .l{margin-top:0}
+  .deal .act,.deal .act .btn{width:100%}
+  .deal .act[style]{display:flex !important;gap:8px}
+  .deal .act .btn{flex:1}
+
+  .rec{flex-direction:column;gap:12px;padding:15px}
+  .rec .ric{width:34px;height:34px}
+  .rec-src{margin-top:4px}
+  .insight{flex-direction:column;gap:10px}
+  .insight .ihead{flex-wrap:wrap;gap:6px}
+  .insight .time{margin-left:0;width:100%;order:5}
+
+  .setrow{flex-wrap:wrap}
+  .modal{max-width:100%;border-radius:16px;max-height:92vh}
+  .modal-h{padding:16px 17px} .modal-b{padding:16px 17px}
+  .dl{grid-template-columns:1fr;gap:12px}
+  .toast-wrap{left:12px;right:12px;bottom:12px}
+  .toast{max-width:100%}
+  .rec-act{flex-wrap:wrap}
+  .rec-act .impact{margin-left:0 !important}
+}
+@media(max-width:380px){
+  .kpis,.mon-stats{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div id="side-backdrop"></div>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="logo">B</div>
+      <div><b>Banapal</b><span>Контроль лидов · Аналитика</span></div>
+    </div>
+    <nav class="nav" id="nav">
+      <div class="nav-label">Обзор</div>
+      <a data-page="dashboard" class="active">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        Дашборд
+      </a>
+      <a data-page="monitor">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 12h4l2 6 4-14 2 8h6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Мониторинг Битрикс24
+        <span class="badge" id="mon-badge">9</span>
+      </a>
+      <div class="nav-label">Маркетинг</div>
+      <a data-page="analytics">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 4v16h16" stroke-linecap="round"/><path d="M4 15l4-4 3 3 6-7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="19" cy="7" r="1.6"/></svg>
+        Сквозная аналитика
+      </a>
+      <a data-page="romi">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v10M9.5 9.2c0-1.2 1.1-1.8 2.5-1.8s2.5.7 2.5 1.9c0 2.6-5 1.4-5 4 0 1.2 1.1 1.9 2.5 1.9s2.5-.7 2.5-1.8" stroke-linecap="round"/></svg>
+        ROMI и рекомендации
+      </a>
+      <a data-page="ai">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 3l1.9 4.2L18 9l-4.1 1.8L12 15l-1.9-4.2L6 9l4.1-1.8L12 3z" stroke-linejoin="round"/><path d="M18.5 15l.8 1.8 1.8.8-1.8.8-.8 1.8-.8-1.8-1.8-.8 1.8-.8.8-1.8z" stroke-linejoin="round"/></svg>
+        AI-инсайты
+      </a>
+      <div class="nav-label">Настройка</div>
+      <a data-page="admin">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" stroke-linecap="round"/></svg>
+        Админ-панель регламента
+      </a>
+    </nav>
+    <div class="side-foot">
+      <b>Этап 0 · Визуальный прототип</b><br>
+      Демо-данные. Согласование состава показателей до начала разработки.
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <button class="btn sm hamb" id="hamb" style="margin-right:2px">☰</button>
+      <div class="page-title">
+        <h1 id="pt-title">Дашборд</h1>
+        <p id="pt-sub">Единая картина по обработке лидов и деньгам</p>
+      </div>
+      <div class="spacer"></div>
+      <div class="demo-pill"><span class="dot"></span>Демо-данные</div>
+      <div class="clock"><b id="clock-t">—</b><br><span id="clock-d">—</span></div>
+    </div>
+
+    <div class="filterbar">
+      <div class="seg" id="period-seg">
+        <button data-p="today">Сегодня</button>
+        <button data-p="7">7 дней</button>
+        <button data-p="30" class="on">30 дней</button>
+        <button data-p="quarter">Квартал</button>
+      </div>
+      <div class="selwrap"><select class="sel" id="f-channel"><option value="all">Все каналы</option><option>Яндекс Директ — Поиск</option><option>Яндекс Директ — РСЯ</option><option>Органический поиск</option><option>Прямые заходы</option><option>Соцсети</option></select></div>
+      <div class="selwrap"><select class="sel" id="f-mgr"><option value="all">Все менеджеры</option><option>Азалия Хаметова</option><option>Дмитрий Крылов</option><option>Ольга Северцева</option><option>Тимур Рахимов</option></select></div>
+      <div class="selwrap"><select class="sel" id="f-source"><option value="all">Все источники</option><option>Поиск</option><option>РСЯ</option><option>Сайт</option><option>Звонок</option></select></div>
+      <div class="spacer"></div>
+      <button class="btn" onclick="toast('Экспорт сформирован (демо)','ok')"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4M4 21h16" stroke-linecap="round" stroke-linejoin="round"/></svg>Экспорт</button>
+    </div>
+
+    <div class="content" id="content">
+
+      <!-- ============ DASHBOARD ============ -->
+      <section class="page show" id="page-dashboard">
+
+        <div class="card attention" style="margin-bottom:16px">
+          <div class="card-h">
+            <div style="display:flex;align-items:center;gap:10px"><h3>Что требует внимания сейчас</h3><span class="live"><span class="p"></span>по данным на текущий момент</span></div>
+            <span class="sub">нажмите на плитку, чтобы перейти к проблеме</span>
+          </div>
+          <div class="att-grid" id="attention"></div>
+        </div>
+
+        <div class="grid kpis" id="kpi-row"></div>
+
+        <div class="grid two" style="margin-top:16px">
+          <div class="card">
+            <div class="card-h"><h3>Воронка обработки</h3><span class="sub">лид → квалификация → сделка → счёт → оплата</span></div>
+            <div class="card-p"><div id="chart-funnel" class="chart" style="height:280px"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Источники лидов</h3><span class="sub">по каналам</span></div>
+            <div class="card-p"><div id="chart-donut" class="chart" style="height:280px"></div></div>
+          </div>
+        </div>
+
+        <div class="grid two" style="margin-top:16px">
+          <div class="card">
+            <div class="card-h"><h3>Выручка и маржа</h3><span class="sub">динамика по дням, ₽</span></div>
+            <div class="card-p"><div id="chart-rev" class="chart" style="height:260px"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>ROMI по каналам</h3><span class="sub">возврат на рекламу</span></div>
+            <div class="card-p"><div id="chart-romi" class="chart" style="height:260px"></div></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="card-h">
+            <div><h3>Контроль обработки по менеджерам</h3></div>
+            <span class="sub">агрегаты регламента · нажмите на строку для перехода к лидам</span>
+          </div>
+          <div class="tbl-wrap">
+            <table class="mtable"><thead><tr>
+              <th>Менеджер</th><th>В работе</th><th>Просрочки</th><th>Без задач</th><th>Ср. 1-й контакт</th>
+              <th>Счетов</th><th>Оплат</th><th>Сумма оплат</th><th>Зона</th>
+            </tr></thead><tbody id="mgr-body"></tbody></table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="card-h">
+            <div><h3>Обработка лидов</h3></div>
+            <span class="sub">приоритет · источник · менеджер · статус · первый контакт · оплата · комментарий AI</span>
+          </div>
+          <div class="tbl-wrap">
+            <table id="leads-table" class="mtable"><thead><tr>
+              <th>Лид / клиент</th><th>Приоритет</th><th>Источник</th><th>Менеджер</th><th>Статус</th><th>1-й контакт</th>
+              <th>Звонок</th><th>Счёт</th><th>Оплата</th><th>Сумма</th><th>Комментарий AI</th>
+            </tr></thead><tbody id="leads-body"></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ MONITORING ============ -->
+      <section class="page" id="page-monitor">
+        <div id="mon-activefilter" style="display:none;margin-bottom:14px"></div>
+        <div class="grid mon-stats" id="mon-stats"></div>
+        <div class="card">
+          <div class="card-h">
+            <div style="display:flex;align-items:center;gap:14px"><h3>Нарушения регламента</h3><span class="live"><span class="p"></span>В реальном времени</span></div>
+            <span class="sub">обновление по вебхукам Битрикс24</span>
+          </div>
+          <div class="deal-list" id="mon-list"></div>
+        </div>
+        <div class="card" style="margin-top:16px" id="review-card">
+          <div class="card-h"><h3>Требует решения руководителя</h3><span class="sub">оценочные нарушения — автоклассификации не поддаются</span></div>
+          <div class="deal-list" id="mon-review"></div>
+        </div>
+      </section>
+
+      <!-- ============ ANALYTICS ============ -->
+      <section class="page" id="page-analytics">
+        <div class="card">
+          <div class="card-h"><h3>Цепочка «реклама → деньги»</h3><span class="sub">сквозная аналитика по деньгам, не по кликам</span></div>
+          <div class="chain" id="chain"></div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="card-h">
+            <div><h3>Сводка по каналам и кампаниям</h3></div>
+            <span class="sub">разверните канал → кампании → сделки</span>
+          </div>
+          <div class="tbl-wrap">
+            <table><thead><tr>
+              <th style="width:34px"></th><th>Канал / кампания</th><th>Расход</th><th>Лиды</th><th>Сделки</th>
+              <th>Оплаты</th><th>Выручка</th><th>Маржа</th><th>ROMI</th><th>Действие</th>
+            </tr></thead><tbody id="analytics-body"></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ ROMI ============ -->
+      <section class="page" id="page-romi">
+        <div class="grid two-b">
+          <div class="card">
+            <div class="card-h"><h3>ROMI по каналам</h3><span class="sub">маржа против расхода</span></div>
+            <div class="card-p"><div id="chart-romi2" class="chart" style="height:300px"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Эффективность кампаний</h3><span class="sub">размер точки — выручка</span></div>
+            <div class="card-p"><div id="chart-bubble" class="chart" style="height:300px"></div></div>
+          </div>
+        </div>
+
+        <div style="margin-top:18px;display:flex;align-items:center;gap:9px">
+          <svg width="18" height="18" fill="none" stroke="#9E77ED" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3l1.9 4.2L18 9l-4.1 1.8L12 15l-1.9-4.2L6 9l4.1-1.8L12 3z" stroke-linejoin="round"/></svg>
+          <h3 style="font-size:15px;font-weight:600">Рекомендации AI по бюджету</h3>
+        </div>
+        <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px;margin-top:12px" id="rec-budget"></div>
+
+        <div class="datagap" style="margin-top:14px">
+          <div class="dg-ic"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01" stroke-linecap="round"/></svg></div>
+          <div>
+            <h4>Канал «Соцсети» в расчёт ROMI не входит</h4>
+            <p>По каналу видны визиты, лиды, сделки и маржа, но источник рекламного расхода не подключён, поэтому окупаемость не рассчитывается и рекомендаций по бюджету система не даёт. Чтобы канал участвовал в ROMI наравне с Директом, нужна отдельная интеграция с рекламным кабинетом. Оценивается вне текущего этапа.</p>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:18px">
+          <div class="card-h">
+            <div><h3>Минус-слова · рабочий список</h3></div>
+            <span class="sub">топ по расходу без конверсий · статус нажатием</span>
+          </div>
+          <div class="tbl-wrap">
+            <table><thead><tr>
+              <th>Кампания</th><th>Поисковая фраза</th><th>Расход</th><th>Клики</th><th>Конв.</th><th>Причина</th><th>Уверенность</th><th>Статус</th>
+            </tr></thead><tbody id="mw-body"></tbody></table>
+          </div>
+          <div style="padding:11px 16px;font-size:12px;color:var(--faint);border-top:1px solid var(--line2)">
+            Показаны 10 из <b id="mw-count-inline">247</b> кандидатов. Полный список — в выгрузке ниже.
+          </div>
+        </div>
+
+        <div class="card export-card" style="margin-top:16px">
+          <div class="ec-ic">
+            <svg width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M4 4.5A1.5 1.5 0 015.5 3H14l6 6v10.5A1.5 1.5 0 0118.5 21h-13A1.5 1.5 0 014 19.5z" stroke-linejoin="round"/><path d="M14 3v6h6" stroke-linejoin="round"/><path d="M8.5 12.5l3.5 5M12 12.5l-3.5 5" stroke-linecap="round"/></svg>
+          </div>
+          <div class="ec-body">
+            <h3>Список минус-слов для Яндекс Директа</h3>
+            <p>Сформирован из отчёта по поисковым запросам Яндекс Директа: фразы, на которые идёт расход при нулевых конверсиях. Список большой и предназначен не для просмотра здесь, а для передачи SEO-специалисту, который вносит его в Директ.</p>
+            <div class="ec-stats">
+              <div class="ecs"><b class="num" id="mw-count">—</b><span>кандидатов в минус-слова</span></div>
+              <div class="ecs"><b class="num" id="mw-save">—</b><span>расход без конверсий / мес</span></div>
+              <div class="ecs"><b class="num" id="mw-camps">—</b><span>кампаний охвачено</span></div>
+            </div>
+          </div>
+          <div class="ec-act">
+            <button class="btn primary" onclick="downloadMinusXlsx()"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4M4 21h16" stroke-linecap="round" stroke-linejoin="round"/></svg>Скачать .xlsx</button>
+            <span class="ec-note" id="mw-note">формат Яндекс Директа</span>
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--faint);margin-top:12px;line-height:1.5">
+          Конверсия здесь считается по целям Яндекс Метрики, а не по факту оплаты: связать поисковый запрос напрямую с оплаченной сделкой Директ не позволяет. Система формирует список; внесение минус-слов, изменение бюджетов и ставок выполняется на стороне Заказчика. В объём Этапа 1 автоприменение не входит.
+        </p>
+      </section>
+
+      <!-- ============ AI INSIGHTS ============ -->
+      <section class="page" id="page-ai">
+        <div class="card" style="margin-bottom:16px;background:linear-gradient(120deg,#F6F3FE,#FFFFFF);border-color:#EADBFB">
+          <div class="card-p" style="display:flex;align-items:center;gap:16px">
+            <div style="width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,var(--violet),#7B4FD6);display:grid;place-items:center;flex:none;box-shadow:0 8px 20px -8px rgba(158,119,237,.7)">
+              <svg width="24" height="24" fill="none" stroke="#fff" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3l1.9 4.2L18 9l-4.1 1.8L12 15l-1.9-4.2L6 9l4.1-1.8L12 3z" stroke-linejoin="round"/></svg>
+            </div>
+            <div>
+              <h3 style="font-size:15.5px;font-weight:600">AI-слой интерпретации</h3>
+              <p style="font-size:13px;color:#5A5470;margin-top:3px;max-width:620px">Подсветка закономерностей, отклонений и рисков, которые не видны из обычной статистики. Расчёт метрик и контроль сроков — детерминированной логикой; модель работает на слое пояснений и рекомендаций.</p>
+            </div>
+          </div>
+        </div>
+        <div class="grid" style="gap:12px" id="insights"></div>
+      </section>
+
+      <!-- ============ ADMIN ============ -->
+      <section class="page" id="page-admin">
+        <div class="grid admin-grid">
+          <div class="card">
+            <div class="card-h"><h3>Пороги по этапам воронки</h3><span class="sub">норматив реакции</span></div>
+            <div class="card-p" id="thresholds"></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Правила по задачам</h3><span class="sub">когда отсутствие задачи — нарушение</span></div>
+            <div class="card-p" id="task-rules"></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Обязательные поля карточки</h3><span class="sub">контроль заполнения</span></div>
+            <div class="card-p">
+              <div class="chkline" id="req-fields"></div>
+              <div style="border-top:1px solid var(--line2);margin-top:16px;padding-top:16px">
+                <div class="field"><label>Правило определения дублей</label>
+                  <select class="sel2"><option>По номеру телефона</option><option>По телефону + имя</option><option>По e-mail</option><option>По телефону или e-mail</option></select>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Рабочий график и календарь</h3><span class="sub">для нормативов в рабочем времени</span></div>
+            <div class="card-p">
+              <div class="field"><label>Рабочие дни</label>
+                <div class="days" id="days"></div>
+              </div>
+              <div class="setrow" style="margin-top:6px">
+                <div class="st"><b>Рабочее время</b><span>московское время</span></div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <input class="txt" style="width:76px;text-align:center" value="09:00">
+                  <span style="color:var(--faint)">—</span>
+                  <input class="txt" style="width:76px;text-align:center" value="18:00">
+                </div>
+              </div>
+              <div class="setrow">
+                <div class="st"><b>Производственный календарь РФ</b><span>учитывать праздники и переносы</span></div>
+                <label class="sw"><input type="checkbox" checked><span class="tr"></span></label>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Логика создания задач</h3><span class="sub">триггер · адресат · текст · срок</span></div>
+            <div class="card-p">
+              <div class="field" style="margin-bottom:14px"><label>Адресат задачи</label>
+                <select class="sel2"><option>Ответственный по сделке</option><option>Руководитель отдела продаж</option><option>Ответственный + руководитель</option></select>
+              </div>
+              <div class="field"><label>Шаблон текста задачи</label>
+                <textarea>Просрочен норматив «{этап}» по сделке {сделка}. Клиент: {клиент}. Свяжитесь и обновите статус до {срок}.</textarea>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Оценочные нарушения</h3><span class="sub">подсветка без автоклассификации</span></div>
+            <div class="card-p">
+              <div class="setrow" style="padding-top:0"><div class="st"><b>Подсвечивать перевод живой сделки в «Спам»</b><span>решение принимает руководитель</span></div><label class="sw"><input type="checkbox" checked><span class="tr"></span></label></div>
+              <div class="setrow"><div class="st"><b>Подсвечивать отказ «для чистоты воронки»</b><span>подозрительные отказы</span></div><label class="sw"><input type="checkbox" checked><span class="tr"></span></label></div>
+              <div class="setrow"><div class="st"><b>Порог «зависшей» сделки</b><span>без движения по статусу</span></div>
+                <div class="stepper"><button onclick="stepVal(this,-1)">−</button><input value="5" readonly><button onclick="stepVal(this,1)">+</button><span class="unit">дн.</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="card-h"><h3>История изменений регламента</h3><span class="sub">кто, когда и что изменил · защита от случайных правок</span></div>
+          <div class="tbl-wrap">
+            <table><thead><tr>
+              <th>Дата и время</th><th>Пользователь</th><th>Параметр</th><th>Было</th><th>Стало</th><th></th>
+            </tr></thead><tbody id="history-body"></tbody></table>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px">
+          <button class="btn">Сбросить</button>
+          <button class="btn primary" onclick="confirmSave()"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>Сохранить регламент</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal"></div>
+</div>
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+/* ================= MOCK DATA ================= */
+const AV = ['#635BFF','#12B76A','#F79009','#1BA9C7','#9E77ED','#F04438'];
+const MGRS = {
+  'Азалия Хаметова':'#635BFF','Дмитрий Крылов':'#12B76A',
+  'Ольга Северцева':'#F79009','Тимур Рахимов':'#1BA9C7'
+};
+function initials(n){return n.split(' ').map(w=>w[0]).slice(0,2).join('')}
+
+// period multipliers relative to 30d baseline
+const PMUL = {today:0.045, '7':0.28, '30':1, quarter:3.05};
+const PLABEL = {today:'за сегодня','7':'за 7 дней','30':'за 30 дней',quarter:'за квартал'};
+
+const BASE = {
+  leads:342, qual:218, deals:96, invoices:78, payments:61,
+  revenue:4820000, margin:1640000, spend:356000,
+  firstContact:8.4, overdue:14
+};
+
+/* spend: расход. null = источник расхода не подключён (ROMI не считается)
+   0 = бесплатный канал (органика, прямые заходы) */
+const CHANNELS = [
+  {name:'Яндекс Директ — Поиск', color:'#635BFF', spend:214000, leads:128, deals:41, payments:27, revenue:2180000, margin:742000,
+    campaigns:[
+      {name:'Поиск · Брендовые запросы', spend:38000, leads:34, deals:18, payments:14, revenue:820000, margin:286000},
+      {name:'Поиск · Категорийные', spend:92000, leads:51, deals:15, payments:9, revenue:910000, margin:300000},
+      {name:'Поиск · Конкуренты', spend:84000, leads:43, deals:8, payments:4, revenue:450000, margin:156000},
+    ]},
+  {name:'Яндекс Директ — РСЯ', color:'#9E77ED', spend:142000, leads:96, deals:22, payments:12, revenue:940000, margin:316000,
+    campaigns:[
+      {name:'РСЯ · Ретаргетинг', spend:46000, leads:28, deals:11, payments:7, revenue:520000, margin:176000},
+      {name:'РСЯ · Look-alike', spend:96000, leads:68, deals:11, payments:5, revenue:420000, margin:140000},
+    ]},
+  {name:'Органический поиск', color:'#12B76A', spend:0, leads:61, deals:19, payments:13, revenue:980000, margin:352000, campaigns:[]},
+  {name:'Прямые заходы', color:'#1BA9C7', spend:0, leads:34, deals:9, payments:6, revenue:460000, margin:158000, campaigns:[]},
+  {name:'Соцсети', color:'#F04438', spend:null, leads:23, deals:5, payments:3, revenue:260000, margin:72000, campaigns:[]},
+];
+
+const LEADS = [
+  {name:'ООО «СтройГрад»', src:'Поиск', mgr:'Азалия Хаметова', status:['Оплачено','t-green'], fc:'6 мин', call:1, inv:1, pay:1, sum:186000, risk:null, tags:['юрлицо','крупный чек'], ai:'Быстрый цикл, чистое соответствие регламенту', reason:''},
+  {name:'Ремонтова М.', src:'РСЯ', mgr:'Дмитрий Крылов', status:['Счёт выставлен','t-blue'], fc:'11 мин', call:1, inv:1, pay:0, sum:74000, risk:'mid', tags:[], ai:'2 дня без оплаты — напомнить о счёте', reason:''},
+  {name:'ИП Королёв', src:'Звонок', mgr:'Ольга Северцева', status:['Просрочка контакта','t-red'], fc:'—', call:0, inv:0, pay:0, sum:0, risk:'high', tags:['юрлицо'], ai:'47 мин без первого контакта — норматив 15 мин', reason:''},
+  {name:'ООО «ТеплоДом»', src:'Поиск', mgr:'Тимур Рахимов', status:['Квалификация','t-amber'], fc:'9 мин', call:1, inv:0, pay:0, sum:145000, risk:'high', tags:['юрлицо','крупный чек'], ai:'Нет задачи на этапе — риск зависания', reason:''},
+  {name:'Сафина А.', src:'Сайт', mgr:'Азалия Хаметова', status:['Оплачено','t-green'], fc:'4 мин', call:1, inv:1, pay:1, sum:128000, risk:null, tags:['повторный','дизайнер','крупный чек'], ai:'Повторный клиент из партнёрского канала дизайнеров', reason:''},
+  {name:'ООО «Мебель+»', src:'РСЯ', mgr:'Дмитрий Крылов', status:['Отказ','t-gray'], fc:'22 мин', call:1, inv:0, pay:0, sum:0, risk:null, tags:['юрлицо'], ai:'Отказ без причины — проверить обоснованность', reason:'Не указана'},
+  {name:'Гумеров Р.', src:'Поиск', mgr:'Ольга Северцева', status:['Оплачено','t-green'], fc:'7 мин', call:1, inv:1, pay:1, sum:214000, risk:null, tags:['горячий','крупный чек'], ai:'Крупная сделка месяца по каналу «Поиск»', reason:''},
+  {name:'ООО «АкваСервис»', src:'Сайт', mgr:'Тимур Рахимов', status:['Зависла','t-red'], fc:'13 мин', call:1, inv:1, pay:0, sum:96000, risk:'high', tags:['юрлицо','крупный чек'], ai:'6 дней без движения по статусу', reason:''},
+];
+
+const MONITOR = [
+  {t:'over', ptype:'overdue_contact', amount:0, kind:['Просрочка первого контакта','t-red'], name:'ИП Королёв · Лид #4821', mgr:'Ольга Северцева', src:'Звонок · Поиск', norm:'норматив 15 мин', sla:'47 мин', over:true, ai:'Лид в рабочее время (14:12), первого контакта нет 47 минут. Требуется немедленный звонок.'},
+  {t:'over', ptype:'no_task', amount:145000, kind:['Сделка без задачи','t-amber'], name:'ООО «ТеплоДом» · Сделка #3390', mgr:'Тимур Рахимов', src:'Поиск · Категорийные', norm:'этап «Квалификация»', sla:'1д 4ч', over:true, ai:'На этапе, где задача обязательна по регламенту, задача отсутствует.'},
+  {t:'over', ptype:'stuck', amount:96000, kind:['Зависшая сделка','t-red'], name:'ООО «АкваСервис» · Сделка #3211', mgr:'Тимур Рахимов', src:'Сайт', norm:'без движения 6 дн · норматив 5', sla:'6 дней', over:true, ai:'Счёт выставлен, оплаты нет, повторных касаний нет. Высокий риск потери.'},
+  {t:'warn', ptype:'no_recontact', amount:74000, kind:['Лид без повторного касания','t-amber'], name:'Ремонтова М. · Лид #4790', mgr:'Дмитрий Крылов', src:'РСЯ · Ретаргетинг', norm:'2 дня без касания', sla:'2 дня', over:false, ai:'Первый контакт был, дальнейших касаний нет 48 часов.'},
+  {t:'warn', ptype:'fields', amount:0, kind:['Не заполнены обязательные поля','t-amber'], name:'ООО «СтройКом» · Сделка #3402', mgr:'Азалия Хаметова', src:'Поиск', norm:'нет: Сумма, UTM', sla:'—', over:false, ai:'Без суммы сделка не попадёт в расчёт выручки и маржи — сумма под риском не считается.'},
+  {t:'warn', ptype:'dup', amount:0, kind:['Возможный дубль','t-blue'], name:'Сафин И. · Лид #4833', mgr:'—', src:'Сайт', norm:'совпадение телефона с #4712', sla:'—', over:false, ai:'Телефон совпадает с существующим лидом от 12.07. Проверьте объединение.'},
+];
+const REVIEW = [
+  {ptype:'spam', kind:['Подозрительный перевод в «Спам»','t-violet'], name:'Лид #4805 · был активный диалог', mgr:'Ольга Северцева', src:'Поиск · Брендовые', ai:'2 входящих звонка и переписка, затем перевод в «Спам». Похоже на «чистку воронки». Решение — за руководителем.'},
+  {ptype:'refusal', kind:['Отказ «для чистоты воронки»','t-violet'], name:'Сделка #3355 · отказ через 3 мин после лида', mgr:'Дмитрий Крылов', src:'РСЯ', ai:'Отказ проставлен спустя 3 минуты без звонка. Автоклассификации не поддаётся — вынесено на проверку.'},
+];
+
+/* Контроль обработки по менеджерам (агрегаты регламента, не скоринг качества) */
+const MANAGERS_CTRL = [
+  {name:'Азалия Хаметова', inwork:14, overdue:0, notask:1, fc:'6 мин', inv:9, pay:7, paysum:512000, zone:['в норме','t-green']},
+  {name:'Дмитрий Крылов', inwork:11, overdue:1, notask:0, fc:'11 мин', inv:7, pay:4, paysum:286000, zone:['наблюдение','t-amber']},
+  {name:'Ольга Северцева', inwork:9, overdue:2, notask:0, fc:'18 мин', inv:5, pay:4, paysum:342000, zone:['зона риска','t-red']},
+  {name:'Тимур Рахимов', inwork:12, overdue:1, notask:2, fc:'9 мин', inv:6, pay:3, paysum:214000, zone:['зона риска','t-red']},
+];
+const PTYPE_LABEL={overdue_contact:'Просрочка первого контакта', no_task:'Сделки без задачи', stuck:'Зависшие сделки',
+  no_recontact:'Без повторного касания', fields:'Незаполненные поля', dup:'Возможные дубли', spam:'Подозрительный спам/отказ', refusal:'Подозрительный спам/отказ'};
+
+const INSIGHTS = [
+  {sev:['Настройка','t-amber'], ic:'i-amber', icon:'clock', title:'Реальный порог потери лида — 27 минут, а не 15', time:'2 часа назад',
+   surface:'Дашборд показывает средний первый контакт 8,4 мин и норматив 15 мин.',
+   text:'При наложении тайминга звонков Calltouch на исход сделок в Битрикс видно нелинейный обрыв конверсии, которого нет в средних. До 8 минут конверсия в оплату <b>31%</b>, в интервале 8–27 минут — <b>22%</b>, а после 27 минут падает до <b>9%</b>. При этом для звонков критичны именно первые 8 минут, а заявки с сайта держат конверсию до ~30 минут.',
+   rec:'Развести норматив по источникам: звонки — 8 мин, формы с сайта — 30 мин. Прогноз +6–9% оплат без роста бюджета.',
+   src:['Calltouch','Битрикс24'], conf:'высокая'},
+
+  {sev:['Деньги','t-red'], ic:'i-red', icon:'alert', title:'«Конкуренты» выглядят успешно по лидам, но убивают маржу', time:'сегодня',
+   surface:'Дашборд: кампания даёт 43 лида и нормальный CPL — просится в рост.',
+   text:'Атрибуция оплат кампании к номенклатуре МойСклад вскрывает товарный микс: <b>71% продаж — низкомаржинальные позиции</b> (маржа 12–15% против 34% в среднем по бизнесу). По стоимости лида канал в норме, а по деньгам — второй худший после соцсетей. Такое расхождение не видно ни в Директе, ни в CRM по отдельности.',
+   rec:'Не масштабировать; сместить бюджет в «Категорийные» с более маржинальным миксом.',
+   src:['Директ','Битрикс24','МойСклад'], conf:'средняя', dep:true},
+
+  {sev:['Возможность','t-green'], ic:'i-green', icon:'up', title:'Показы обрываются до самого конверсионного окна', time:'сегодня',
+   surface:'Дашборд: расход и ROMI выглядят ровными по дням.',
+   text:'В <b>19 днях из 30</b> дневной расход кампании равен установленному лимиту, и в эти дни визиты из рекламы обрываются в среднем после <b>16:40</b>. При этом <b>34% оплаченных заявок</b> приходят в 19:00–23:00. Самое платёжеспособное окно охватывается частично, и это вопрос не ставок, а распределения показов по времени суток.',
+   rec:'Перераспределить показы на 19:00–23:00 временным таргетингом или поднять дневной лимит. Прогноз +11–14% заявок.',
+   src:['Метрика','Директ','Битрикс24'], conf:'средняя'},
+
+  {sev:['Оптимизация','t-blue'], ic:'i-indigo', icon:'net', title:'Связка «канал × менеджер» важнее силы менеджера', time:'вчера',
+   surface:'Отчёты по менеджерам и по каналам по отдельности не показывают этого.',
+   text:'Эффект виден только на пересечении источника и исполнителя: лиды из РСЯ, попадающие к Д. Крылову, закрываются в <b>2,1×</b> чаще среднего, а брендовый поиск заметно лучше отрабатывает А. Хаметова. Дело не в общей результативности менеджеров, а в соответствии типа лида и стиля работы.',
+   rec:'Правило автоназначения лида по источнику. Прогноз +8–11% выручки без роста бюджета.',
+   src:['Битрикс24','Директ'], conf:'средняя'},
+
+  {sev:['Риск','t-red'], ic:'i-red', icon:'leak', title:'Скрытая утечка на переходе «Счёт → Оплата»', time:'вчера',
+   surface:'Воронка на дашборде выглядит здоровой до этапа оплаты.',
+   text:'Каждый пятый выставленный счёт зависает дольше 5 дней, и в <b>63%</b> таких случаев после счёта не было ни одного касания — проблема не в спросе, а в отсутствии дожима. Замороженная выручка на конец периода — <b>≈ 610 000 ₽</b>. Классическая статистика воронки это усредняет и прячет.',
+   rec:'Авто-задача «дожать оплату» через 48 ч после счёта без касания. Ожидаемый возврат ~15% зависших счетов.',
+   src:['Битрикс24'], conf:'высокая'},
+
+  {sev:['Качество данных','t-violet'], ic:'i-violet', icon:'eye', title:'Дубли искажают, какой канал вы считаете прибыльным', time:'2 дня назад',
+   surface:'Дашборд считает ROMI по данным «как есть».',
+   text:'≈9% лидов Директа имеют дубль из органики или звонка в течение 72 часов. Часть оплат приписана не тому источнику: реальный ROMI органики занижен, а платного поиска — завышен. После склейки дублей ROMI «Поиск» ≈ <b>224%</b>, а не 247%. Решения о бюджете на «грязных» данных ведут не туда.',
+   rec:'Применять правило дедупликации до расчёта атрибуции (настраивается в админ-панели).',
+   src:['Битрикс24','Метрика','Calltouch'], conf:'высокая'},
+
+  {sev:['Потенциал · Этап 2','t-gray'], ic:'i-cyan', icon:'up', title:'Повторные покупки меняют картину прибыльности каналов', time:'3 дня назад',
+   surface:'В Этапе 1 ROMI считается по первой сделке.',
+   text:'По данным МойСклад клиенты бренд-поиска в <b>2,6×</b> чаще возвращаются за повторной покупкой в течение 60 дней. С учётом LTV фактическая отдача бренд-кампании существенно выше расчётной, а часть «дешёвых» каналов на деле удерживает клиентов хуже. Полноценный расчёт LTV выходит за рамки Этапа 1 и оценивается отдельно.',
+   rec:'Кандидат в Этап 2: когортный LTV по каналам на данных МойСклад.',
+   src:['МойСклад','Битрикс24'], conf:'гипотеза'},
+];
+
+/* ================= HELPERS ================= */
+function fmt(n){return Math.round(n).toLocaleString('ru-RU')}
+function money(n){return fmt(n)+' ₽'}
+function moneyShort(n){
+  if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2).replace('.',',')+' млн ₽';
+  if(Math.abs(n)>=1e3) return Math.round(n/1e3)+' тыс ₽';
+  return fmt(n)+' ₽';
+}
+function romiOf(c){return (c.spend!==null && c.spend>0) ? Math.round((c.margin-c.spend)/c.spend*100) : null}
+function romiTag(c){
+  if(c.spend===null) return '<span class="tag t-gray" title="Источник расхода не подключён">нет данных</span>';
+  if(c.spend===0) return '<span class="tag t-gray">бесплатный канал</span>';
+  const r=romiOf(c);
+  const cls = r>=200?'t-green':r>=80?'t-amber':'t-red';
+  return `<span class="tag ${cls}">${r>0?'+':''}${r}%</span>`;
+}
+/* Рекомендуемое действие по каналу/кампании: масштабировать · под наблюдением · проверить · ограничить · данных недостаточно */
+const ACTIONS={
+  'Яндекс Директ — Поиск':['Масштабировать','act-scale','ROMI 247% — устойчиво выше цели'],
+  'Яндекс Директ — РСЯ':['Под наблюдением','act-watch','ROMI 123% — приемлемо, но ниже поиска'],
+  'Органический поиск':['—','act-none','Бесплатный канал, бюджетного рычага нет'],
+  'Прямые заходы':['—','act-none','Бесплатный канал, бюджетного рычага нет'],
+  'Соцсети':['Данных недостаточно','act-nodata','Источник расхода не подключён'],
+  'Поиск · Брендовые запросы':['Масштабировать','act-scale','Упирается в дневной лимит, спрос есть'],
+  'Поиск · Категорийные':['Масштабировать','act-scale','ROMI 226%, есть запас по объёму'],
+  'Поиск · Конкуренты':['Проверить','act-check','CPL в норме, но 71% продаж низкомаржинальны'],
+  'РСЯ · Ретаргетинг':['Масштабировать','act-scale','ROMI 283% — лучший результат в РСЯ'],
+  'РСЯ · Look-alike':['Ограничить','act-limit','34% расхода уходит на запросы без конверсий'],
+};
+function actionOf(item){
+  if(ACTIONS[item.name]) return ACTIONS[item.name];
+  if(item.spend===null) return ['Данных недостаточно','act-nodata','Источник расхода не подключён'];
+  if(item.spend===0) return ['—','act-none','Бесплатный канал'];
+  const r=romiOf(item);
+  if(r>=200) return ['Масштабировать','act-scale','Высокий ROMI'];
+  if(r>=120) return ['Под наблюдением','act-watch','ROMI в пределах цели'];
+  if(r>=80) return ['Проверить','act-check','ROMI ниже цели'];
+  return ['Ограничить','act-limit','ROMI ниже порога окупаемости'];
+}
+function actionBadge(item){
+  const a=actionOf(item);
+  if(a[0]==='—') return `<span class="nodata" title="${a[2]}">—</span>`;
+  return `<span class="actbadge ${a[1]}" title="${a[2]}">${a[0]}</span>`;
+}
+let state = {period:'30', channel:'all', mgr:'all', source:'all', leadFilter:null, monFilter:null};
+
+/* ================= NAV ================= */
+const PAGE_META = {
+  dashboard:['Дашборд','Единая картина по обработке лидов и деньгам'],
+  monitor:['Мониторинг Битрикс24','Контроль регламента в реальном времени'],
+  analytics:['Сквозная аналитика','Реклама → визит → звонок → сделка → оплата → маржа'],
+  romi:['ROMI и рекомендации','Возврат на рекламу и оптимизация бюджета'],
+  ai:['AI-инсайты','Интерпретация, закономерности и риски'],
+  admin:['Админ-панель регламента','Настройка параметров контроля без разработчика'],
+};
+const inited = new Set();
+function goPage(p){
+  document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('active', x.dataset.page===p));
+  document.querySelectorAll('.page').forEach(x=>x.classList.remove('show'));
+  document.getElementById('page-'+p).classList.add('show');
+  document.getElementById('pt-title').textContent=PAGE_META[p][0];
+  document.getElementById('pt-sub').textContent=PAGE_META[p][1];
+  document.getElementById('content').scrollTop=0;
+  setSidebar(false);
+  ensurePage(p);
+}
+document.getElementById('nav').addEventListener('click',e=>{
+  const a=e.target.closest('a[data-page]'); if(!a)return;
+  goPage(a.dataset.page);
+});
+function ensurePage(p){
+  if(inited.has(p)){ resizeCharts(); return; }
+  inited.add(p);
+  if(p==='dashboard') initDashboardCharts();
+  if(p==='romi') initRomiCharts();
+  resizeCharts();
+}
+
+/* ================= DRILL-DOWN ================= */
+function drillMonitor(ptype){
+  state.monFilter=ptype;
+  goPage('monitor');
+  renderMonitor();
+}
+function drillLeadsRisk(){
+  state.leadFilter='risk';
+  goPage('dashboard');
+  renderLeads();
+  setTimeout(()=>{const t=document.getElementById('leads-table');if(t)t.scrollIntoView({behavior:'smooth',block:'start'});},80);
+  toast('Показаны лиды с риском потери','ok');
+}
+function drillManager(name){
+  state.mgr=name; state.leadFilter=null;
+  const sel=document.getElementById('f-mgr'); if(sel)sel.value=name;
+  renderLeads();
+  goPage('dashboard');
+  setTimeout(()=>{const t=document.getElementById('leads-table');if(t)t.scrollIntoView({behavior:'smooth',block:'start'});},80);
+  toast('Лиды менеджера: '+name.split(' ')[0],'ok');
+}
+function drillRomi(){ goPage('analytics'); }
+function drillMinus(){ goPage('romi'); setTimeout(()=>{const c=document.querySelector('.export-card');if(c)c.scrollIntoView({behavior:'smooth',block:'center'});},80); }
+function drillData(){ toast('Открыта диагностика источников данных (демо)','ok'); }
+
+/* ================= RENDER: KPI ================= */
+function renderKpis(){
+  const m=PMUL[state.period];
+  const cards=[
+    {lab:'Лиды',ic:'i-indigo',svg:'<path d="M16 8a4 4 0 10-8 0 4 4 0 008 0zM4 20a8 8 0 0116 0" stroke-linecap="round"/>',val:fmt(BASE.leads*m),foot:['up','+12%'],spark:[8,10,9,12,11,14,13,16]},
+    {lab:'Сделки',ic:'i-cyan',svg:'<path d="M9 12l2 2 4-4M7.8 3.5a2 2 0 011.6-.9h5.2a2 2 0 011.6.9l1.9 2.6a2 2 0 01.4 1.2v8.4a2 2 0 01-2 2H7.5a2 2 0 01-2-2V7.3a2 2 0 01.4-1.2z" stroke-linejoin="round"/>',val:fmt(BASE.deals*m),foot:['up','+8%'],spark:[5,6,6,7,8,7,9,10]},
+    {lab:'Выручка',ic:'i-green',svg:'<path d="M12 2v20M17 6H10a3 3 0 000 6h4a3 3 0 010 6H6" stroke-linecap="round"/>',val:moneyShort(BASE.revenue*m),foot:['up','+15%'],spark:[10,11,10,13,14,13,16,18],money:true},
+    {lab:'Маржа',ic:'i-green',svg:'<path d="M4 18L10 12l4 4 6-8M20 8h-4M20 8v4" stroke-linecap="round" stroke-linejoin="round"/>',val:moneyShort(BASE.margin*m),foot:['up','+11%'],spark:[7,8,8,9,11,10,12,13],money:true},
+    {lab:'Расход на рекламу',ic:'i-amber',svg:'<path d="M12 3v18M6 8h9a3 3 0 010 6H8a3 3 0 000 6h10" stroke-linecap="round"/>',val:moneyShort(BASE.spend*m),foot:['warn','+4%'],spark:[9,10,9,11,10,11,10,11],drill:"drillRomi()"},
+    {lab:'ROMI · платные каналы',ic:'i-indigo',svg:'<circle cx="12" cy="12" r="9"/><path d="M12 8v8M9 10c0-1 1-1.6 3-1.6s3 .6 3 1.8c0 2.4-6 1.2-6 3.6 0 1.2 1 1.8 3 1.8s3-.6 3-1.6" stroke-linecap="round"/>',val:'+197%',foot:['up','+18 п.п.'],spark:[6,7,8,9,10,12,13,15],drill:"drillRomi()"},
+    {lab:'Ср. первый контакт',ic:'i-cyan',svg:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round"/>',val:BASE.firstContact.toString().replace('.',',')+'<small>мин</small>',foot:['up','−1,3 мин'],spark:[12,11,11,10,9,9,8,8]},
+    {lab:'Просрочки регламента',ic:'i-red',svg:'<path d="M12 8v4M12 16h.01M10.3 3.9L2.6 17.5a2 2 0 001.7 3h15.4a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" stroke-linecap="round" stroke-linejoin="round"/>',val:fmt(BASE.overdue*m),foot:['down','−6%'],spark:[18,16,15,14,14,13,12,11],drill:"drillMonitor('overdue_contact')"},
+  ];
+  document.getElementById('kpi-row').innerHTML = cards.map(c=>`
+    <div class="card kpi ${c.drill?'kpi-click':''}" ${c.drill?`onclick="${c.drill}"`:''}>
+      <div class="top"><div class="ic ${c.ic}"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${c.svg}</svg></div><span class="lab">${c.lab}</span></div>
+      <div class="val num" ${c.money?'':`data-count`}>${c.val}</div>
+      <div class="foot"><span class="chip ${c.foot[0]}">${c.foot[0]==='up'?'↑':c.foot[0]==='down'?'↓':'→'} ${c.foot[1]}</span><span class="vs">${PLABEL[state.period]}</span></div>
+      <div class="spark">${sparkline(c.spark, c.foot[0]==='down'? '#12B76A' : c.foot[0]==='warn'?'#F79009':'#635BFF')}</div>
+    </div>`).join('');
+}
+function sparkline(d,color){
+  const w=64,h=24,mx=Math.max(...d),mn=Math.min(...d),r=mx-mn||1;
+  const pts=d.map((v,i)=>[i/(d.length-1)*w, h-2-((v-mn)/r)*(h-4)]);
+  const path=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  const area=path+` L${w} ${h} L0 ${h} Z`;
+  const id='g'+Math.random().toString(36).slice(2,7);
+  return `<svg width="${w}" height="${h}"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".22"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#${id})"/><path d="${path}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+/* ================= RENDER: LEADS TABLE ================= */
+function yn(v,pos){
+  if(v) return `<span class="dot-ok" style="background:var(--green)"></span>`;
+  return `<span class="dot-ok" style="background:#DFE2EA"></span>`;
+}
+const RISK_META={high:['Высокий риск','rk-high'], mid:['Средний риск','rk-mid']};
+const TAG_META={
+  'крупный чек':'tg-money','повторный':'tg-repeat','юрлицо':'tg-legal','дизайнер':'tg-designer','горячий':'tg-hot'
+};
+function priorityCell(l){
+  let out='';
+  if(l.risk && RISK_META[l.risk]) out+=`<span class="risk-pill ${RISK_META[l.risk][1]}">${RISK_META[l.risk][0]}</span>`;
+  const tags=(l.tags||[]).map(t=>`<span class="attr ${TAG_META[t]||''}">${t}</span>`).join('');
+  if(tags) out+=`<span class="attr-wrap">${tags}</span>`;
+  return out||'<span class="nodata">—</span>';
+}
+function renderLeads(){
+  let rows = LEADS.filter(l=> state.mgr==='all'||l.mgr===state.mgr).filter(l=> state.source==='all'||l.src===state.source);
+  if(state.leadFilter==='risk') rows=rows.filter(l=>l.risk);
+  const body=document.getElementById('leads-body');
+  if(!rows.length){ body.innerHTML=`<tr><td colspan="11"><div class="empty-note">Нет лидов по выбранным фильтрам</div></td></tr>`; return; }
+  body.innerHTML = rows.map((l,i)=>`
+    <tr class="click rk-row-${l.risk||'none'}" onclick="openLead(${LEADS.indexOf(l)})">
+      <td style="font-weight:600">${l.name}</td>
+      <td>${priorityCell(l)}</td>
+      <td><span class="tag t-gray">${l.src}</span></td>
+      <td><span class="mgr"><span class="ava" style="background:${MGRS[l.mgr]||'#94A0B8'}">${l.mgr==='—'?'?':initials(l.mgr)}</span>${l.mgr.split(' ')[0]}</span></td>
+      <td><span class="tag ${l.status[1]}">${l.status[0]}</span></td>
+      <td class="num">${l.fc}</td>
+      <td style="text-align:center">${yn(l.call)}</td>
+      <td style="text-align:center">${yn(l.inv)}</td>
+      <td style="text-align:center">${yn(l.pay)}</td>
+      <td class="money num">${l.sum?money(l.sum):'—'}</td>
+      <td><div class="ai-cell"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3l1.6 3.6L17 8l-3.4 1.4L12 13l-1.6-3.6L7 8l3.4-1.4L12 3z" stroke-linejoin="round"/></svg>${l.ai}</div></td>
+    </tr>`).join('');
+}
+function renderManagers(){
+  const body=document.getElementById('mgr-body'); if(!body)return;
+  body.innerHTML=MANAGERS_CTRL.map(m=>`
+    <tr class="click" onclick="drillManager('${m.name}')">
+      <td><span class="mgr"><span class="ava" style="background:${MGRS[m.name]||'#94A0B8'}">${initials(m.name)}</span><b>${m.name}</b></span></td>
+      <td class="num">${m.inwork}</td>
+      <td class="num">${m.overdue?`<span class="cnt-bad">${m.overdue}</span>`:'0'}</td>
+      <td class="num">${m.notask?`<span class="cnt-bad">${m.notask}</span>`:'0'}</td>
+      <td class="num">${m.fc}</td>
+      <td class="num">${m.inv}</td>
+      <td class="num">${m.pay}</td>
+      <td class="num money">${money(m.paysum)}</td>
+      <td><span class="tag ${m.zone[1]}">${m.zone[0]}</span></td>
+    </tr>`).join('');
+}
+
+/* ================= RENDER: ATTENTION (triage) ================= */
+function renderAttention(){
+  const totalRisk = moneyAtRisk(); // 315 000
+  const riskLeads = LEADS.filter(l=>l.risk).length;
+  const tiles=[
+    {n:1, l:'Просроченные лиды', sub:'первый контакт > норматива', cls:'red', ic:'clock', fn:"drillMonitor('overdue_contact')"},
+    {n:1, l:'Сделки без задач', sub:money(145000)+' под риском', cls:'amber', ic:'task', fn:"drillMonitor('no_task')"},
+    {n:1, l:'Сделки без движения', sub:money(96000)+' под риском', cls:'red', ic:'freeze', fn:"drillMonitor('stuck')"},
+    {n:1, l:'Без повторного касания', sub:money(74000)+' под риском', cls:'amber', ic:'touch', fn:"drillMonitor('no_recontact')"},
+    {n:2, l:'Отказы / спам на проверке', sub:'оценочные нарушения', cls:'violet', ic:'flag', fn:"drillMonitor('spam')"},
+    {n:2, l:'Кампании ниже цели ROMI', sub:'Look-alike · Конкуренты', cls:'amber', ic:'romi', fn:"drillRomi()"},
+    {n:1, l:'Ошибки источников данных', sub:'нет данных о расходе', cls:'gray', ic:'plug', fn:"drillData()"},
+  ];
+  const ICONS={
+    clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2" stroke-linecap="round"/>',
+    task:'<path d="M9 11l3 3 8-8M20 12v6a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h9" stroke-linecap="round" stroke-linejoin="round"/>',
+    freeze:'<path d="M12 2v20M4 7l16 10M20 7L4 17" stroke-linecap="round"/>',
+    touch:'<path d="M8 11V6a2 2 0 114 0v5m0-3a2 2 0 114 0v3m0-1a2 2 0 114 0v4a6 6 0 01-6 6h-2a6 6 0 01-5-2.7L7 16" stroke-linecap="round" stroke-linejoin="round"/>',
+    flag:'<path d="M5 21V4M5 4h11l-2 4 2 4H5" stroke-linecap="round" stroke-linejoin="round"/>',
+    romi:'<circle cx="12" cy="12" r="9"/><path d="M12 8v8M9 10c0-1 1-1.6 3-1.6s3 .6 3 1.8c0 2.4-6 1.2-6 3.6 0 1.2 1 1.8 3 1.8s3-.6 3-1.6" stroke-linecap="round"/>',
+    plug:'<path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 01-10 0zM12 16v6" stroke-linecap="round" stroke-linejoin="round"/>',
+  };
+  const head=`
+    <div class="att-head">
+      <div class="att-money click" onclick="drillMonitor('stuck')">
+        <span class="aml">Деньги под риском сейчас</span>
+        <span class="amv num">${money(totalRisk)}</span>
+        <span class="ams">просроченные сделки с известной суммой</span>
+      </div>
+      <div class="att-leads click" onclick="drillLeadsRisk()">
+        <span class="aml">Лиды с риском потери</span>
+        <span class="amv num">${riskLeads}</span>
+        <span class="ams">нажмите, чтобы отфильтровать список лидов</span>
+      </div>
+    </div>`;
+  const grid=tiles.map(t=>`
+    <div class="att-tile ${t.cls} click" onclick="${t.fn}">
+      <div class="att-ic"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${ICONS[t.ic]}</svg></div>
+      <div class="att-n num">${t.n}</div>
+      <div class="att-l">${t.l}</div>
+      <div class="att-s">${t.sub}</div>
+      <div class="att-go">Перейти →</div>
+    </div>`).join('');
+  document.getElementById('attention').innerHTML = head + `<div class="att-tiles">${grid}</div>`;
+}
+
+/* ================= RENDER: MONITORING ================= */
+function moneyAtRisk(){return MONITOR.filter(d=>d.t==='over').reduce((s,d)=>s+(d.amount||0),0);}
+function renderMonitor(){
+  const risk=moneyAtRisk();
+  const stats=[
+    {n:3,l:'Критичные просрочки',c:'r'},
+    {n:moneyShort(risk),l:'Деньги под риском',c:'r'},
+    {n:3,l:'Требуют внимания',c:'a'},
+    {n:2,l:'На проверке',c:'v'},
+    {n:'96%',l:'В норме сегодня',c:'g'}
+  ];
+  document.getElementById('mon-stats').innerHTML = stats.map(s=>`
+    <div class="mstat ${s.c}"><div class="mn num">${typeof s.n==='number'&&s.n%1!==0?s.n.toString().replace('.',','):s.n}</div><div class="ml">${s.l}</div></div>`).join('');
+
+  // active drill filter pill
+  const af=document.getElementById('mon-activefilter');
+  const flt=state.monFilter;
+  if(flt){
+    af.style.display='';
+    af.innerHTML=`<div class="filterpill">Фильтр: <b>${PTYPE_LABEL[flt]||flt}</b><button onclick="clearMonFilter()">×</button></div>`;
+    document.getElementById('review-card').style.display=(flt==='spam'||flt==='refusal')?'':'none';
+  }else{
+    af.style.display='none';
+    document.getElementById('review-card').style.display='';
+  }
+
+  const list = flt ? MONITOR.filter(d=>d.ptype===flt) : MONITOR;
+  const listEl=document.getElementById('mon-list');
+  if(flt==='spam'||flt==='refusal'){
+    listEl.innerHTML=`<div class="empty-note">Оценочные нарушения этого типа показаны в блоке «Требует решения руководителя» ниже.</div>`;
+  } else if(!list.length){
+    listEl.innerHTML=`<div class="empty-note">Нет нарушений этого типа</div>`;
+  } else {
+    listEl.innerHTML = list.map((d,i)=>{
+      const barColor = d.t==='over'?'var(--red)':'var(--amber)';
+      const slaCls = d.over?'over':d.sla==='—'?'':'warn';
+      const amt = d.amount?`<span class="risk-amt">под риском ${money(d.amount)}</span>`:'';
+      return `<div class="deal">
+        <div class="lft" style="background:${barColor}"></div>
+        <div class="body">
+          <div class="name">${d.name} <span class="tag ${d.kind[1]}">${d.kind[0]}</span> ${amt}</div>
+          <div class="meta"><span>👤 ${d.mgr}</span><span>◎ ${d.src}</span><span>⏱ ${d.norm}</span></div>
+          <div class="ai-note"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3l1.6 3.6L17 8l-3.4 1.4L12 13l-1.6-3.6L7 8l3.4-1.4L12 3z" stroke-linejoin="round"/></svg>${d.ai}</div>
+        </div>
+        <div class="sla ${slaCls}"><div class="t num">${d.sla}</div><div class="l">${d.over?'просрочено':d.sla==='—'?'':'до нормы'}</div></div>
+        <div class="act"><button class="btn primary sm" onclick="makeTask(this,'${d.name}')">Поставить задачу</button></div>
+      </div>`;
+    }).join('');
+  }
+
+  document.getElementById('mon-review').innerHTML = REVIEW.map(d=>`
+    <div class="deal">
+      <div class="lft" style="background:var(--violet)"></div>
+      <div class="body">
+        <div class="name">${d.name} <span class="tag ${d.kind[1]}">${d.kind[0]}</span></div>
+        <div class="meta"><span>👤 ${d.mgr}</span><span>◎ ${d.src}</span></div>
+        <div class="ai-note"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3l1.6 3.6L17 8l-3.4 1.4L12 13l-1.6-3.6L7 8l3.4-1.4L12 3z" stroke-linejoin="round"/></svg>${d.ai}</div>
+      </div>
+      <div class="act" style="display:flex;gap:8px">
+        <button class="btn sm" onclick="toast('Помечено как обоснованное','ok')">Обоснованно</button>
+        <button class="btn primary sm" onclick="toast('Задача руководителю поставлена','ok')">На разбор</button>
+      </div>
+    </div>`).join('');
+}
+function clearMonFilter(){state.monFilter=null;renderMonitor();}
+
+/* ================= RENDER: ANALYTICS ================= */
+function renderChain(){
+  const m=PMUL[state.period];
+  const steps=[
+    {l:'Реклама',n:'11 700',sub:'кликов',c:'#8E96AD',w:100},
+    {l:'Визиты',n:'9 240',sub:'сессий',c:'#635BFF',w:82},
+    {l:'Обращения',n:fmt(BASE.leads*m),sub:'лидов',c:'#7B6FF2',w:60},
+    {l:'Сделки',n:fmt(BASE.deals*m),sub:'создано',c:'#1BA9C7',w:42},
+    {l:'Оплаты',n:fmt(BASE.payments*m),sub:'клиентов',c:'#0FA968',w:30},
+    {l:'Маржа',n:moneyShort(BASE.margin*m),sub:'заработано',c:'#12B76A',w:24,glow:true},
+  ];
+  const arrow='<div class="chain-arrow"><svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>';
+  document.getElementById('chain').innerHTML = steps.map((s,i)=>{
+    const conv = i>0? Math.round(parseInt(steps[i].n.replace(/\D/g,''))/ (parseInt(steps[i-1].n.replace(/\D/g,''))||1)*100):null;
+    return `<div class="chain-step">
+      <div class="chain-bar" style="background:linear-gradient(135deg,${s.c},${s.c}dd);${s.glow?'box-shadow:0 10px 26px -8px rgba(18,183,106,.6)':''};height:${60+s.w*.9}px;justify-content:center;display:flex;flex-direction:column">
+        <div class="cn num">${s.n}</div><div class="cl">${s.l}</div><div class="csub">${s.sub}</div>
+      </div>
+      ${i<steps.length-1?arrow:''}
+      <div class="chain-conv">${i===0?'старт':'конверсия <b>'+conv+'%</b>'}</div>
+    </div>`;
+  }).join('');
+}
+function renderAnalyticsTable(){
+  const chs = CHANNELS.filter(c=> state.channel==='all'||c.name===state.channel);
+  const body=document.getElementById('analytics-body');
+  body.innerHTML = chs.map((c,ci)=>{
+    const hasKids=c.campaigns.length>0;
+    const main=`<tr class="click" data-ci="${ci}" ${hasKids?`onclick="toggleChannel(${ci},this)"`:''}>
+      <td>${hasKids?'<span class="caret">▸</span>':''}</td>
+      <td><span style="display:inline-flex;align-items:center;gap:9px"><i style="width:10px;height:10px;border-radius:3px;background:${c.color}"></i><b>${c.name}</b></span></td>
+      <td class="num">${c.spend===null?'<span class="nodata">нет данных</span>':(c.spend?money(c.spend):'0 ₽')}</td>
+      <td class="num">${c.leads}</td>
+      <td class="num">${c.deals}</td>
+      <td class="num">${c.payments}</td>
+      <td class="num money">${money(c.revenue)}</td>
+      <td class="num money" style="color:var(--green)">${money(c.margin)}</td>
+      <td>${romiTag(c)}</td>
+      <td>${actionBadge(c)}</td>
+    </tr>`;
+    let kids='';
+    if(hasKids){
+      kids=`<tr class="expand-row" id="exp-${ci}" style="display:none"><td colspan="10"><div class="exp-inner"><table><tbody>`+
+        c.campaigns.map(k=>`<tr class="click" onclick="openCampaign('${k.name}',${k.deals},${k.revenue},event)">
+          <td style="width:auto"><span style="color:var(--muted)">↳ ${k.name}</span></td>
+          <td class="num">${k.spend?money(k.spend):'—'}</td>
+          <td class="num">${k.leads}</td>
+          <td class="num">${k.deals}</td>
+          <td class="num">${k.payments}</td>
+          <td class="num money">${money(k.revenue)}</td>
+          <td class="num money" style="color:var(--green)">${money(k.margin)}</td>
+          <td>${romiTag(k)}</td>
+          <td>${actionBadge(k)}</td>
+        </tr>`).join('')+
+        `</tbody></table></div></td></tr>`;
+    }
+    return main+kids;
+  }).join('');
+}
+function toggleChannel(ci,row){
+  const ex=document.getElementById('exp-'+ci);
+  const open=ex.style.display!=='none';
+  ex.style.display=open?'none':'';
+  row.classList.toggle('open',!open);
+}
+
+/* ================= RENDER: ROMI recs & minus-words ================= */
+const BUDGET_RECS=[
+  {ic:'i-red',svg:'<path d="M12 2v20M17 6H10a3 3 0 000 6h4a3 3 0 010 6H6" stroke-linecap="round"/>',
+   title:'Не масштабировать «Поиск · Конкуренты»: ловушка по стоимости лида', tag:['CPL в норме, маржа нет','t-red'],
+   text:'По стоимости лида кампания выглядит здоровой и просится в рост. Но если разложить её оплаты по номенклатуре, вскрывается товарный микс: <b>71% продаж приходится на низкомаржинальные позиции</b> (12–15% против 34% в среднем). По кликам вы бы её удвоили, по деньгам это худшая платная кампания.',
+   why:'Сделки кампании связываются с отгрузками в МойСклад, по ним берётся отчёт прибыльности (себестоимость по FIFO). Реальный ROMI 86% против 226% у «Категорийных» при сопоставимом CPL.',
+   impact:'предотвращает слив ~84 000 ₽', src:['Директ','Битрикс24','МойСклад'], conf:'средняя', dep:true},
+
+  {ic:'i-green',svg:'<path d="M4 18L10 12l4 4 6-8M20 8h-4M20 8v4"/>',
+   title:'Снять дневное ограничение с «Поиск · Брендовые»', tag:['+653% ROMI','t-green'],
+   text:'Кампания упирается в дневной бюджет: в <b>19 днях из 30</b> расход равен установленному лимиту, то есть показы прекращались до конца суток. Это самая прибыльная кампания в аккаунте, и она единственная, которую ограничивает не спрос, а настройка.',
+   why:'Сопоставление дневного расхода (Reports API) с лимитом DailyBudget из Campaigns.get по каждому дню периода. При снятии лимита прогноз +~180 000 ₽ выручки в месяц.',
+   impact:'+180 000 ₽ выручки/мес', src:['Директ'], conf:'высокая'},
+
+  {ic:'i-amber',svg:'<path d="M12 3v18M6 8h9a3 3 0 010 6H8a3 3 0 000 6h10"/>',
+   title:'Сократить «РСЯ · Look-alike» на 30%', tag:['+46% ROMI','t-amber'],
+   text:'Самая дорогая кампания в РСЯ при худшей отдаче: 96 000 ₽ расхода на 5 оплат. В отчёте по поисковым запросам <b>34% расхода уходит на фразы без единой конверсии</b>. Часть бюджета логично перенести в «Категорийные», которые масштабируются без роста стоимости сделки.',
+   why:'SEARCH_QUERY_PERFORMANCE_REPORT: расход и конверсии в разрезе запросов. Конверсии считаются по целям Метрики, привязка к оплате идёт через Битрикс24.',
+   impact:'переносит ~29 000 ₽', src:['Директ','Метрика'], conf:'высокая'},
+
+  {ic:'i-cyan',svg:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2" stroke-linecap="round"/>',
+   title:'Настроить временной таргетинг под вечернее окно', tag:['+11–14% заявок','t-green'],
+   text:'<b>34% оплаченных заявок</b> приходят в 19:00–23:00, но в дни исчерпания бюджета визиты по кампаниям обрываются в среднем после 16:40. Самое платёжеспособное окно охватывается частично. Вопрос не в ставках, а в распределении показов по времени суток.',
+   why:'Почасовое распределение визитов из рекламы (Logs API Метрики) наложено на время поступления оплаченных заявок в Битрикс24, сверено с днями, где расход упёрся в DailyBudget.',
+   impact:'+11–14% заявок в том же бюджете', src:['Метрика','Директ','Битрикс24'], conf:'средняя'},
+];
+function srcChips(arr){return `<div class="rec-src">${arr.map(s=>`<span class="srcchip">${s}</span>`).join('')}</div>`}
+function renderRomiRecs(){
+  document.getElementById('rec-budget').innerHTML = BUDGET_RECS.map((r,i)=>`
+    <div class="rec">
+      <div class="ric ${r.ic}"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${r.svg}</svg></div>
+      <div style="flex:1;min-width:0">
+        <h4>${r.title} <span class="tag ${r.tag[1]}">${r.tag[0]}</span></h4>
+        <p>${r.text}</p>
+        <div class="why"><b>Как найдено:</b> ${r.why}</div>
+        <div class="rec-meta">
+          ${srcChips(r.src)}
+          <span class="conf">достоверность: <b>${r.conf}</b></span>
+          ${r.dep?'<span class="depchip" title="Требует настроенной связки сделка ↔ отгрузка">треб. связки с МойСклад</span>':''}
+        </div>
+        <div class="rec-act">
+          <button class="btn primary sm" onclick="toast('Рекомендация принята — сформирована задача','ok')">Принять</button>
+          <button class="btn sm" onclick="toast('Отложено','ok')">Отложить</button>
+          <span class="impact tag t-blue">${r.impact}</span>
+        </div>
+      </div>
+    </div>`).join('');
+}
+/* Minus-words: generated dataset for the export (not shown in UI) */
+const MW_STEMS=['бесплатно','своими руками','б/у','бу','инструкция','форум','отзывы сотрудников','вакансия','работа',
+  'скачать','чертёж','гост','что такое','как сделать самому','авито','юла','вики','википедия','курсы','обучение',
+  'оптом дешево','недорого бу','реферат','видео обзор','франшиза','аренда','ремонт самостоятельно','размеры','вес',
+  'производитель','завод изготовитель','дилер','маркетплейс','каталог pdf','прайс скачать','зарплата','сертификат гост',
+  'демонтаж','утилизация','списание','история','определение','своими','самому','дешевле','акция когда','когда скидки'];
+const MW_CATS=['','двери','окна','мебель','кухни','ремонт','плитка','ламинат','сантехника','двери межкомнатные','шкафы','столешницы'];
+const MW_CAMPS=['Поиск · Категорийные','Поиск · Конкуренты','РСЯ · Look-alike','Поиск · Общие запросы','Поиск · Регионы'];
+let MW_DATA=null, MW_SUMMARY=null;
+function mwReason(phrase){
+  const p=phrase.toLowerCase();
+  if(/вакан|работа|зарплат|резюме/.test(p)) return ['Поиск работы','высокая'];
+  if(/скачать|инструк|чертёж|гост|реферат|pdf|схема|вики|википед|что такое|определение|история/.test(p)) return ['Информационный запрос','высокая'];
+  if(/бесплат|своими|самому|самостоят/.test(p)) return ['Нецелевой мотив (DIY/бесплатно)','высокая'];
+  if(/б\/у|бу|авито|юла|дешев|недорого|оптом/.test(p)) return ['Нецелевой сегмент','средняя'];
+  if(/отзыв|форум|производитель|завод|дилер|франшиз/.test(p)) return ['Не покупательский интент','средняя'];
+  return ['Расход без конверсий','средняя'];
+}
+function buildMinusWords(){
+  if(MW_DATA) return MW_DATA;
+  const rows=[]; const seen=new Set();
+  for(const cat of MW_CATS){
+    for(const stem of MW_STEMS){
+      const phrase=(cat?cat+' ':'')+stem;
+      if(seen.has(phrase)) continue; seen.add(phrase);
+      const h=[...phrase].reduce((a,c)=>a+c.charCodeAt(0),0);
+      const shows=40+(h*7)%620;
+      const clicks=Math.max(1,Math.round(shows*(0.008+(h%9)/520)));
+      const cpc=14+(h%30);
+      const spend=Math.round(clicks*cpc/10)*10;
+      const camp=MW_CAMPS[h%MW_CAMPS.length];
+      const level=(h%3===0)?'Кампания':'Группа объявлений';
+      const [reason,conf]=mwReason(phrase);
+      rows.push({phrase, shows, clicks, spend, conv:0, deals:0, camp, level, reason, conf, status:'new'});
+    }
+  }
+  rows.sort((a,b)=>b.spend-a.spend);
+  const list=rows.slice(0,247);
+  const totSpend=list.reduce((s,r)=>s+r.spend,0);
+  const camps=new Set(list.map(r=>r.camp)).size;
+  MW_DATA=list;
+  MW_SUMMARY={count:list.length, spend:totSpend, camps};
+  return list;
+}
+const MW_STATUS={new:['Новое','ms-new'],accepted:['Принято','ms-ok'],rejected:['Отклонено','ms-rej'],exported:['Выгружено','ms-exp']};
+function renderMinusWords(){
+  buildMinusWords();
+  document.getElementById('mw-count').textContent=fmt(MW_SUMMARY.count);
+  const inl=document.getElementById('mw-count-inline'); if(inl)inl.textContent=fmt(MW_SUMMARY.count);
+  document.getElementById('mw-save').textContent='≈ '+moneyShort(MW_SUMMARY.spend);
+  document.getElementById('mw-camps').textContent=MW_SUMMARY.camps;
+  renderMwTable();
+}
+function renderMwTable(){
+  const el=document.getElementById('mw-body'); if(!el)return;
+  const top=MW_DATA.slice(0,10);
+  el.innerHTML=top.map((r,i)=>`
+    <tr>
+      <td><span class="tag t-gray">${r.camp}</span></td>
+      <td style="font-weight:600">${r.phrase}</td>
+      <td class="num">${money(r.spend)}</td>
+      <td class="num">${r.clicks}</td>
+      <td class="num">${r.conv}</td>
+      <td><span class="mw-reason">${r.reason}</span></td>
+      <td><span class="conf-dot ${r.conf==='высокая'?'cf-hi':'cf-mid'}"></span>${r.conf}</td>
+      <td><span class="msbadge ${MW_STATUS[r.status][1]}" onclick="cycleMw(${i})" title="нажмите для смены статуса">${MW_STATUS[r.status][0]}</span></td>
+    </tr>`).join('');
+}
+function cycleMw(i){
+  const order=['new','accepted','rejected'];
+  const r=MW_DATA[i];
+  if(r.status==='exported'){r.status='new';}
+  else{const k=order.indexOf(r.status); r.status=order[(k+1)%order.length];}
+  renderMwTable();
+}
+function downloadMinusXlsx(){
+  const list=buildMinusWords();
+  const header=['Минус-слово','Показы','Клики','Конверсии (Метрика)','Расход без конверсий, ₽','Кампания','Уровень применения','Причина','Уверенность','Статус'];
+  const stLabel={new:'Новое',accepted:'Принято',rejected:'Отклонено',exported:'Выгружено'};
+  const aoa=[header, ...list.map(r=>[r.phrase, r.shows, r.clicks, r.conv, r.spend, r.camp, r.level, r.reason, r.conf, stLabel[r.status]])];
+  try{
+    const ws=XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols']=[{wch:34},{wch:9},{wch:8},{wch:18},{wch:22},{wch:24},{wch:20},{wch:26},{wch:13},{wch:12}];
+    ws['!autofilter']={ref:'A1:J1'};
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,'Минус-слова');
+    const d=new Date().toISOString().slice(0,10);
+    XLSX.writeFile(wb,`minus-slova_banapal_${d}.xlsx`);
+    // все не отклонённые помечаем выгруженными
+    MW_DATA.forEach(r=>{if(r.status!=='rejected')r.status='exported';});
+    renderMwTable();
+    document.getElementById('mw-note').textContent='файл сформирован ✓';
+    toast('Файл минус-слов сформирован ('+fmt(list.length)+' строк)','ok');
+  }catch(e){
+    toast('Скачивание доступно при открытии файла в браузере','ok');
+  }
+}
+
+/* ================= RENDER: AI INSIGHTS ================= */
+function renderInsights(){
+  const icons={alert:'<path d="M12 8v4M12 16h.01M10.3 3.9L2.6 17.5a2 2 0 001.7 3h15.4a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" stroke-linejoin="round"/>',
+    trend:'<path d="M4 7l6 6 4-4 6 6M20 15V9M14 9h6" stroke-linecap="round" stroke-linejoin="round"/>',
+    eye:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+    up:'<path d="M4 18L10 12l4 4 6-8M20 8h-4M20 8v4" stroke-linejoin="round"/>',
+    clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2" stroke-linecap="round"/>',
+    net:'<circle cx="6" cy="7" r="2.4"/><circle cx="18" cy="7" r="2.4"/><circle cx="12" cy="17" r="2.4"/><path d="M7.6 8.6l3 6.8M16.4 8.6l-3 6.8M8.2 7h7.6" stroke-linecap="round"/>',
+    leak:'<path d="M6 3h12M8 3v4l-3 9a4 4 0 004 5h6a4 4 0 004-5l-3-9V3" stroke-linejoin="round"/><path d="M6.5 14h11" stroke-linecap="round"/>'};
+  document.getElementById('insights').innerHTML = INSIGHTS.map(x=>`
+    <div class="insight">
+      <div class="iic ${x.ic}"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${icons[x.icon]}</svg></div>
+      <div style="flex:1;min-width:0">
+        <div class="ihead"><b>${x.title}</b><span class="sev ${x.sev[1]}">${x.sev[0]}</span><span class="time">${x.time}</span></div>
+        <div class="i-surface"><span>На дашборде:</span> ${x.surface}</div>
+        <p>${x.text}</p>
+        <div class="i-rec"><svg fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>${x.rec}</span></div>
+        <div class="rec-meta">${srcChips(x.src)}<span class="conf">достоверность: <b>${x.conf}</b></span>${x.dep?'<span class="depchip">треб. связки с МойСклад</span>':''}</div>
+      </div>
+    </div>`).join('');
+}
+
+/* ================= RENDER: ADMIN ================= */
+const THRESHOLDS=[
+  {n:'Первый контакт',s:'реакция на новый лид',v:15,u:'мин'},
+  {n:'Квалификация',s:'перевод из «Новый»',v:1,u:'р.дн'},
+  {n:'КП отправлено',s:'после квалификации',v:2,u:'р.дн'},
+  {n:'Счёт выставлен',s:'после согласования',v:3,u:'дн'},
+  {n:'Оплата',s:'после счёта',v:5,u:'дн'},
+];
+const TASK_RULES=[
+  {n:'Новый лид',s:'создавать задачу «связаться»',on:true},
+  {n:'Квалификация',s:'задача обязательна на этапе',on:true},
+  {n:'КП отправлено',s:'задача-напоминание о касании',on:true},
+  {n:'Счёт выставлен',s:'контроль оплаты',on:true},
+  {n:'Оплата получена',s:'без задачи',on:false},
+];
+const REQ_FIELDS=[['Телефон',1],['Источник',1],['UTM-метки',1],['Сумма сделки',1],['Ответственный',1],['Товар / бренд',1],['Регион',0],['Комментарий',0]];
+function renderAdmin(){
+  document.getElementById('thresholds').innerHTML = THRESHOLDS.map((t,i)=>`
+    <div class="setrow"><div class="st"><b>${t.n}</b><span>${t.s}</span></div>
+      <div class="stepper"><button onclick="stepVal(this,-1)">−</button><input value="${t.v}" readonly><button onclick="stepVal(this,1)">+</button><span class="unit">${t.u}</span></div>
+    </div>`).join('');
+  document.getElementById('task-rules').innerHTML = TASK_RULES.map(t=>`
+    <div class="setrow"><div class="st"><b>${t.n}</b><span>${t.s}</span></div>
+      <label class="sw"><input type="checkbox" ${t.on?'checked':''}><span class="tr"></span></label></div>`).join('');
+  document.getElementById('req-fields').innerHTML = REQ_FIELDS.map(f=>`
+    <div class="chk ${f[1]?'on':''}" onclick="this.classList.toggle('on')">
+      <span class="bx"><svg fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>${f[0]}</div>`).join('');
+  const dd=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  document.getElementById('days').innerHTML = dd.map((d,i)=>`<div class="day ${i<5?'on':''}" onclick="this.classList.toggle('on')">${d}</div>`).join('');
+  renderHistory();
+}
+const HISTORY=[
+  {dt:'26.07 · 14:32', user:'А. Покровский', param:'Первый контакт', from:'20 мин', to:'15 мин', crit:true},
+  {dt:'24.07 · 11:05', user:'Руководитель ОП', param:'Порог «зависшей» сделки', from:'7 дн', to:'5 дн', crit:true},
+  {dt:'21.07 · 09:48', user:'А. Покровский', param:'Обязательные поля', from:'—', to:'+ UTM-метки', crit:false},
+  {dt:'18.07 · 16:20', user:'Руководитель ОП', param:'Задача на этапе «Квалификация»', from:'выкл', to:'вкл', crit:true},
+];
+function renderHistory(){
+  const el=document.getElementById('history-body'); if(!el)return;
+  el.innerHTML=HISTORY.map((h,i)=>`
+    <tr>
+      <td class="num" style="color:var(--muted)">${h.dt}</td>
+      <td><b>${h.user}</b></td>
+      <td>${h.param} ${h.crit?'<span class="crit-dot" title="влияет на расчёт нарушений"></span>':''}</td>
+      <td><span class="hist-from">${h.from}</span></td>
+      <td><span class="hist-to">${h.to}</span></td>
+      <td style="text-align:right"><button class="btn sm" onclick="rollback(${i})">Откатить</button></td>
+    </tr>`).join('');
+}
+function rollback(i){toast('Значение «'+HISTORY[i].param+'» восстановлено: '+HISTORY[i].from,'ok');}
+function confirmSave(){
+  showModal(`
+    <div class="modal-h">
+      <div class="mtitle" style="display:flex;gap:12px;align-items:flex-start">
+        <div style="width:36px;height:36px;border-radius:10px;background:var(--amber-soft);color:var(--amber);display:grid;place-items:center;flex:none">
+          <svg width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 8v4M12 16h.01M10.3 3.9L2.6 17.5a2 2 0 001.7 3h15.4a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" stroke-linejoin="round"/></svg>
+        </div>
+        <div><h3>Подтвердите изменение регламента</h3><p>Часть правок влияет на расчёт нарушений задним числом</p></div>
+      </div>
+      <button class="xbtn" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-b">
+      <p style="font-size:13px;color:#4A5364;line-height:1.55;margin-bottom:14px">Вы меняете параметры, по которым система определяет просрочки и зависшие сделки. После сохранения показатели за текущий период будут пересчитаны, а изменение зафиксируется в истории.</p>
+      <div class="save-diff">
+        <div class="sd-row"><span class="sd-p">Первый контакт</span><span class="hist-from">20 мин</span><svg width="14" height="14" fill="none" stroke="#9AA1B1" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round"/></svg><span class="hist-to">15 мин</span></div>
+        <div class="sd-row"><span class="sd-p">Порог зависшей сделки</span><span class="hist-from">7 дн</span><svg width="14" height="14" fill="none" stroke="#9AA1B1" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round"/></svg><span class="hist-to">5 дн</span></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:18px">
+        <button class="btn" style="flex:1" onclick="closeModal()">Отмена</button>
+        <button class="btn primary" style="flex:1" onclick="closeModal();toast('Регламент сохранён, изменения внесены в историю','ok')">Сохранить и пересчитать</button>
+      </div>
+    </div>`);
+}
+
+/* ================= MODALS ================= */
+function openLead(i){
+  const l=LEADS[i];
+  const timeline=[
+    ['Лид создан','Источник: '+l.src,'14:02','#635BFF'],
+    ['Первый контакт', l.fc==='—'?'не выполнен — просрочка':'через '+l.fc, l.fc==='—'?'—':'14:'+String(2+parseInt(l.fc)).padStart(2,'0'), l.fc==='—'?'#F04438':'#12B76A'],
+    ['Звонок', l.call?'исходящий, 3:12':'нет', l.call?'14:11':'—', l.call?'#12B76A':'#DFE2EA'],
+    ['Счёт', l.inv?'выставлен на '+money(l.sum):'нет', l.inv?'15:40':'—', l.inv?'#12B76A':'#DFE2EA'],
+    ['Оплата', l.pay?'получена':'ожидается', l.pay?'16:20':'—', l.pay?'#12B76A':'#DFE2EA'],
+  ];
+  showModal(`
+    <div class="modal-h">
+      <div class="mtitle"><h3>${l.name}</h3><p>Сделка · ${l.src} · ${l.mgr}</p></div>
+      <span class="tag ${l.status[1]}" style="align-self:center">${l.status[0]}</span>
+      <button class="xbtn" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-b">
+      <div class="dl">
+        <div class="di"><div class="k">Сумма</div><div class="v num">${l.sum?money(l.sum):'—'}</div></div>
+        <div class="di"><div class="k">Первый контакт</div><div class="v num">${l.fc}</div></div>
+        <div class="di"><div class="k">Менеджер</div><div class="v">${l.mgr}</div></div>
+        <div class="di"><div class="k">Причина отказа</div><div class="v">${l.reason||'—'}</div></div>
+      </div>
+      <div class="ai-note" style="margin-top:16px"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3l1.6 3.6L17 8l-3.4 1.4L12 13l-1.6-3.6L7 8l3.4-1.4L12 3z" stroke-linejoin="round"/></svg><b style="color:#5A4494">Комментарий AI:</b>&nbsp;${l.ai}</div>
+      <div class="timeline"><h4>История касаний</h4>
+        ${timeline.map(t=>`<div class="tl"><span class="tdot" style="background:${t[3]}"></span><div class="tc"><b>${t[0]}</b><span>${t[1]}</span> <span class="tt">· ${t[2]}</span></div></div>`).join('')}
+      </div>
+      <div style="display:flex;gap:10px;margin-top:18px">
+        <button class="btn primary" style="flex:1" onclick="closeModal();toast('Задача поставлена ответственному','ok')">Поставить задачу</button>
+        <button class="btn" onclick="closeModal()">Открыть в Битрикс24</button>
+      </div>
+    </div>`);
+}
+function openCampaign(name,deals,revenue,e){
+  if(e)e.stopPropagation();
+  const names=['ООО «СтройГрад»','Ремонтова М.','ИП Королёв','ООО «ТеплоДом»','Сафина А.','Гумеров Р.'];
+  const rows=Array.from({length:Math.min(6,deals)},(_,i)=>{
+    const sum=Math.round((revenue/deals)*(0.6+Math.random()*0.9));
+    const paid=Math.random()>0.4;
+    return `<tr><td style="font-weight:600">${names[i%names.length]}</td>
+      <td class="num money">${money(sum)}</td>
+      <td><span class="tag ${paid?'t-green':'t-amber'}">${paid?'Оплачено':'В работе'}</span></td></tr>`;
+  }).join('');
+  showModal(`
+    <div class="modal-h"><div class="mtitle"><h3>${name}</h3><p>Сделки кампании · ${deals} шт · выручка ${moneyShort(revenue)}</p></div><button class="xbtn" onclick="closeModal()">×</button></div>
+    <div class="modal-b">
+      <table><thead><tr><th>Клиент</th><th>Сумма</th><th>Статус</th></tr></thead><tbody>${rows}</tbody></table>
+      <p style="font-size:12px;color:var(--faint);margin-top:14px">Проваливание до конкретных сделок с атрибуцией к кампании — как в требовании 3.3 ТЗ.</p>
+    </div>`);
+}
+function showModal(html){document.getElementById('modal').innerHTML=html;document.getElementById('overlay').classList.add('show')}
+function closeModal(){document.getElementById('overlay').classList.remove('show')}
+
+/* ================= TASK / TOAST ================= */
+function makeTask(btn,name){
+  btn.outerHTML='<span class="tag t-green">✓ Задача поставлена</span>';
+  toast('Задача создана в Битрикс24 · '+name.split('·')[0].trim(),'ok');
+  let b=document.getElementById('mon-badge');let v=parseInt(b.textContent)-1;if(v<=0){b.style.display='none'}else{b.textContent=v}
+}
+function toast(msg,type){
+  const wrap=document.getElementById('toasts');
+  const el=document.createElement('div');el.className='toast '+(type||'ok');
+  const ic = type==='ai'
+    ? '<path d="M12 3l1.6 3.6L17 8l-3.4 1.4L12 13l-1.6-3.6L7 8l3.4-1.4L12 3z" stroke-linejoin="round"/>'
+    : '<path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/>';
+  el.innerHTML=`<span class="tic"><svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">${ic}</svg></span>${msg}`;
+  wrap.appendChild(el);
+  setTimeout(()=>{el.style.transition='.3s';el.style.opacity='0';el.style.transform='translateX(20px)';setTimeout(()=>el.remove(),300)},2800);
+}
+
+/* ================= CHARTS (ECharts) ================= */
+let charts={};
+function mk(id){const el=document.getElementById(id);const ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();return echarts.init(el);}
+const AXIS_STYLE={axisLine:{lineStyle:{color:'#E4E7EF'}},axisLabel:{color:'#8A92A6',fontSize:11,fontFamily:'Inter'},axisTick:{show:false}};
+const SPLIT={splitLine:{lineStyle:{color:'#F1F2F7'}}};
+function initDashboardCharts(){
+  const m=PMUL[state.period];
+  // Funnel
+  charts.funnel=mk('chart-funnel');
+  charts.funnel.setOption({
+    tooltip:{trigger:'item',formatter:'{b}: {c}'},
+    series:[{type:'funnel',left:'6%',right:'6%',top:6,bottom:6,minSize:'32%',gap:3,
+      label:{position:'inside',color:'#fff',fontWeight:600,fontFamily:'Inter',fontSize:12,formatter:'{b}\n{c}'},
+      itemStyle:{borderWidth:0,borderRadius:6},
+      color:['#635BFF','#7B6FF2','#1BA9C7','#0FA968','#12B76A'],
+      data:[
+        {value:Math.round(BASE.leads*m),name:'Лиды'},
+        {value:Math.round(BASE.qual*m),name:'Квалификация'},
+        {value:Math.round(BASE.deals*m),name:'Сделки'},
+        {value:Math.round(BASE.invoices*m),name:'Счета'},
+        {value:Math.round(BASE.payments*m),name:'Оплаты'},
+      ]}]
+  });
+  // Donut
+  charts.donut=mk('chart-donut');
+  charts.donut.setOption({
+    tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
+    legend:{bottom:0,icon:'circle',itemWidth:8,itemHeight:8,textStyle:{color:'#6B7488',fontSize:11,fontFamily:'Inter'}},
+    series:[{type:'pie',radius:['52%','74%'],center:['50%','44%'],avoidLabelOverlap:true,
+      itemStyle:{borderColor:'#fff',borderWidth:3,borderRadius:5},
+      label:{show:false},
+      data:CHANNELS.map(c=>({value:c.leads,name:c.name.replace('Яндекс Директ — ','ЯД · '),itemStyle:{color:c.color}}))}]
+  });
+  // Revenue/margin line
+  const days=state.period==='today'?['09','11','13','15','17']:['1','5','10','15','20','25','30'];
+  const rev=days.map((_,i)=>Math.round(BASE.revenue*m/days.length*(0.7+i*0.09+Math.random()*.2)));
+  const mar=rev.map(v=>Math.round(v*0.34));
+  charts.rev=mk('chart-rev');
+  charts.rev.setOption({
+    tooltip:{trigger:'axis',valueFormatter:v=>fmt(v)+' ₽'},
+    legend:{right:0,top:0,icon:'roundRect',itemWidth:10,itemHeight:10,textStyle:{color:'#6B7488',fontSize:11}},
+    grid:{left:8,right:8,top:34,bottom:4,containLabel:true},
+    xAxis:{type:'category',data:days,boundaryGap:false,...AXIS_STYLE},
+    yAxis:{type:'value',...AXIS_STYLE,...SPLIT,axisLabel:{color:'#8A92A6',fontSize:11,formatter:v=>v>=1e6?(v/1e6)+'M':v/1e3+'k'}},
+    series:[
+      {name:'Выручка',type:'line',smooth:true,data:rev,symbol:'none',lineStyle:{width:2.5,color:'#635BFF'},
+        areaStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:'rgba(99,91,255,.22)'},{offset:1,color:'rgba(99,91,255,0)'}])}},
+      {name:'Маржа',type:'line',smooth:true,data:mar,symbol:'none',lineStyle:{width:2.5,color:'#12B76A'},
+        areaStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:'rgba(18,183,106,.18)'},{offset:1,color:'rgba(18,183,106,0)'}])}},
+    ]
+  });
+  // ROMI bar
+  charts.romi=mk('chart-romi');
+  const rd=CHANNELS.map(c=>({name:c.name.replace('Яндекс Директ — ','ЯД · '),v:romiOf(c)})).filter(x=>x.v!==null);
+  charts.romi.setOption({
+    tooltip:{trigger:'axis',axisPointer:{type:'shadow'},valueFormatter:v=>v+'%'},
+    grid:{left:8,right:16,top:10,bottom:4,containLabel:true},
+    xAxis:{type:'value',...AXIS_STYLE,...SPLIT,axisLabel:{color:'#8A92A6',fontSize:11,formatter:'{value}%'}},
+    yAxis:{type:'category',data:rd.map(x=>x.name).reverse(),...AXIS_STYLE},
+    series:[{type:'bar',data:rd.map(x=>({value:x.v,itemStyle:{color:x.v>=200?'#12B76A':x.v>=80?'#F79009':'#F04438',borderRadius:[0,6,6,0]}})).reverse(),
+      barWidth:'52%',label:{show:true,position:'right',formatter:'{c}%',color:'#6B7488',fontSize:11,fontFamily:'Space Grotesk',fontWeight:600}}]
+  });
+}
+function initRomiCharts(){
+  charts.romi2=mk('chart-romi2');
+  const data=CHANNELS.map(c=>({name:c.name.replace('Яндекс Директ — ','ЯД · '),spend:c.spend,margin:c.margin,color:c.color}));
+  charts.romi2.setOption({
+    tooltip:{trigger:'axis',axisPointer:{type:'shadow'},valueFormatter:v=>fmt(v)+' ₽'},
+    legend:{top:0,right:0,icon:'roundRect',itemWidth:10,itemHeight:10,textStyle:{color:'#6B7488',fontSize:11}},
+    grid:{left:8,right:8,top:34,bottom:4,containLabel:true},
+    xAxis:{type:'category',data:data.map(d=>d.name),...AXIS_STYLE,axisLabel:{color:'#8A92A6',fontSize:10,interval:0,rotate:18}},
+    yAxis:{type:'value',...AXIS_STYLE,...SPLIT,axisLabel:{color:'#8A92A6',fontSize:11,formatter:v=>v/1e3+'k'}},
+    series:[
+      {name:'Расход',type:'bar',data:data.map(d=>d.spend),barWidth:'28%',itemStyle:{color:'#E0803B',borderRadius:[5,5,0,0],opacity:.85}},
+      {name:'Маржа',type:'bar',data:data.map(d=>({value:d.margin,itemStyle:{color:'#12B76A',borderRadius:[5,5,0,0]}})),barWidth:'28%'},
+    ]
+  });
+  charts.bubble=mk('chart-bubble');
+  const camps=[];CHANNELS.forEach(c=>c.campaigns.forEach(k=>camps.push({name:k.name,spend:k.spend,romi:romiOf(k),rev:k.revenue,color:c.color})));
+  charts.bubble.setOption({
+    tooltip:{formatter:p=>`${p.data[3]}<br/>Расход: ${fmt(p.data[0])} ₽<br/>ROMI: ${p.data[1]}%<br/>Выручка: ${fmt(p.data[2])} ₽`},
+    grid:{left:8,right:16,top:16,bottom:4,containLabel:true},
+    xAxis:{name:'Расход, ₽',nameLocation:'middle',nameGap:30,nameTextStyle:{color:'#8A92A6',fontSize:11},type:'value',...AXIS_STYLE,...SPLIT,axisLabel:{color:'#8A92A6',fontSize:11,formatter:v=>v/1e3+'k'}},
+    yAxis:{name:'ROMI, %',type:'value',...AXIS_STYLE,...SPLIT,axisLabel:{color:'#8A92A6',fontSize:11,formatter:'{value}%'}},
+    series:[{type:'scatter',symbolSize:d=>Math.max(14,Math.sqrt(d[2])/22),
+      data:camps.map(c=>({value:[c.spend,c.romi,c.rev,c.name],itemStyle:{color:c.color,opacity:.82,borderColor:'#fff',borderWidth:2}})),
+      label:{show:true,formatter:p=>p.data.value[1]+'%',position:'top',color:'#6B7488',fontSize:10,fontFamily:'Space Grotesk',fontWeight:600}}]
+  });
+}
+function resizeCharts(){setTimeout(()=>Object.values(charts).forEach(c=>c&&c.resize()),60)}
+window.addEventListener('resize',resizeCharts);
+
+/* ================= FILTERS WIRING ================= */
+document.getElementById('period-seg').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-p]');if(!b)return;
+  document.querySelectorAll('#period-seg button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');state.period=b.dataset.p;refreshAll();
+});
+document.getElementById('f-channel').addEventListener('change',e=>{state.channel=e.target.value;refreshAll()});
+document.getElementById('f-mgr').addEventListener('change',e=>{state.mgr=e.target.value;state.leadFilter=null;refreshAll()});
+document.getElementById('f-source').addEventListener('change',e=>{state.source=e.target.value;state.leadFilter=null;refreshAll()});
+function setSidebar(open){document.getElementById('sidebar').classList.toggle('open',open);document.getElementById('side-backdrop').classList.toggle('show',open);}
+document.getElementById('hamb').addEventListener('click',()=>setSidebar(!document.getElementById('sidebar').classList.contains('open')));
+document.getElementById('side-backdrop').addEventListener('click',()=>setSidebar(false));
+
+function refreshAll(){
+  renderAttention();renderKpis();renderLeads();renderManagers();renderChain();renderAnalyticsTable();
+  if(inited.has('dashboard')) initDashboardCharts();
+  if(inited.has('romi')) initRomiCharts();
+  resizeCharts();
+}
+
+/* ================= CLOCK ================= */
+function tick(){
+  const d=new Date();
+  document.getElementById('clock-t').textContent=d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})+' МСК';
+  document.getElementById('clock-d').textContent=d.toLocaleDateString('ru-RU',{day:'numeric',month:'long',weekday:'short'});
+}
+setInterval(tick,1000);tick();
+
+/* ================= BOOT ================= */
+renderAttention();renderKpis();renderLeads();renderManagers();renderChain();renderAnalyticsTable();
+renderMonitor();renderRomiRecs();renderMinusWords();renderInsights();renderAdmin();
+initDashboardCharts();inited.add('dashboard');
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
+</script>
+</body>
+</html>
