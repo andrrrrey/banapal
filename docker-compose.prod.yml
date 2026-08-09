@@ -60,9 +60,12 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    # Периодическая перезагрузка nginx для подхвата обновлённых сертификатов.
+    # Рендерим прод-шаблон вручную (envsubst подставляет только ${DOMAIN}),
+    # затем периодически перезагружаем nginx для подхвата обновлённых сертификатов.
     command: >
-      /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done &
+      /bin/sh -c "envsubst '$${DOMAIN}' < /etc/nginx/templates/default.conf.template
+      > /etc/nginx/conf.d/default.conf;
+      while :; do sleep 6h & wait $${!}; nginx -s reload; done &
       nginx -g 'daemon off;'"
 
   certbot:
