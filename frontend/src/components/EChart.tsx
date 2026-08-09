@@ -1,14 +1,19 @@
-import * as echarts from "echarts";
+import type { EChartsOption } from "echarts";
 import { useEffect, useRef } from "react";
 
+import { init } from "@/echarts";
+
+type ChartInstance = ReturnType<typeof init>;
+type CoreOption = Parameters<ChartInstance["setOption"]>[0];
+
 // Обёртка над Apache ECharts: инициализация, обновление опций, авто-resize.
-export function EChart({ option, height = 280 }: { option: echarts.EChartsOption; height?: number }) {
+export function EChart({ option, height = 280 }: { option: EChartsOption; height?: number }) {
   const el = useRef<HTMLDivElement>(null);
-  const chart = useRef<echarts.ECharts | null>(null);
+  const chart = useRef<ChartInstance | null>(null);
 
   useEffect(() => {
     if (!el.current) return;
-    chart.current = echarts.init(el.current);
+    chart.current = init(el.current);
     const onResize = () => chart.current?.resize();
     window.addEventListener("resize", onResize);
     return () => {
@@ -19,7 +24,7 @@ export function EChart({ option, height = 280 }: { option: echarts.EChartsOption
   }, []);
 
   useEffect(() => {
-    chart.current?.setOption(option, true);
+    chart.current?.setOption(option as CoreOption, true);
     chart.current?.resize();
   }, [option]);
 
