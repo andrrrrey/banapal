@@ -12,11 +12,16 @@ set -a; source .env; set +a
 
 DOMAIN="${DOMAIN:?DOMAIN не задан в .env}"
 EMAIL="${LETSENCRYPT_EMAIL:?LETSENCRYPT_EMAIL не задан в .env}"
-COMPOSE="docker compose -f docker-compose.prod.yml"
+# По умолчанию — БЫСТРЫЙ путь: готовые образы из реестра (docker-compose.registry.yml).
+# Для сборки на сервере: COMPOSE_FILE=docker-compose.prod.yml ./scripts/init-letsencrypt.sh
+FILE="${COMPOSE_FILE:-docker-compose.registry.yml}"
+COMPOSE="docker compose -f ${FILE}"
 LIVE="/etc/letsencrypt/live/${DOMAIN}"
 
-echo "==> 1/5 Сборка образов (первый раз занимает несколько минут, прогресс ниже)"
-$COMPOSE build web api
+echo "==> 1/5 Подготовка образов (${FILE})"
+# registry-режим: скачать готовые образы; build-режим: собрать. Лишнее — no-op.
+$COMPOSE pull web api 2>/dev/null || true
+$COMPOSE build web api 2>/dev/null || true
 
 echo "==> 2/5 Временный самоподписанный сертификат (чтобы поднять nginx)"
 $COMPOSE run --rm --entrypoint "sh -c \

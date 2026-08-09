@@ -25,11 +25,13 @@ RUN apt-get update \
 # Установленные зависимости из стадии сборки
 COPY --from=builder /install /usr/local
 
-# Корневой и выпускающий сертификаты НУЦ Минцифры (Russian Trusted CA) для API
-# российских сервисов (раздел 7.2 ТЗ). Строгие таймауты — шаг не блокирует сборку;
-# при недоступности источника продолжаем (доустановка — docs/ADMIN.md).
-# Отключить попытку: --build-arg RUSSIAN_CA=off
-ARG RUSSIAN_CA=on
+# Корневой и выпускающий сертификаты НУЦ Минцифры (Russian Trusted CA).
+# По умолчанию ОТКЛЮЧЕНО: интеграции Этапа 1 (Битрикс24, Яндекс, Calltouch,
+# МойСклад) используют обычные коммерческие сертификаты. CA нужен только для
+# прямых API российских банков/платёжных шлюзов (вне объёма Этапа 1) — включить:
+#   docker compose ... build --build-arg RUSSIAN_CA=on api
+# либо доустановить в рантайме (docs/ADMIN.md). Это экономит время сборки.
+ARG RUSSIAN_CA=off
 RUN set -eux; \
     if [ "$RUSSIAN_CA" = "on" ] \
        && curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 \

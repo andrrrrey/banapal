@@ -55,29 +55,51 @@ nano .env
 Куда вносить ключи API каждой интеграции — подробно в [INTEGRATIONS.md](INTEGRATIONS.md).
 Все секреты хранятся только в `.env` (в репозиторий не попадают).
 
-## 5. Выпустить TLS-сертификат (Let's Encrypt)
-```bash
-./scripts/init-letsencrypt.sh
-```
-Скрипт поднимет временный nginx, пройдёт проверку домена и выпустит боевой
-сертификат. Требует, чтобы DNS (шаг 1) уже указывал на сервер и порт 80 был открыт.
+## 5. Запуск: быстрый путь (рекомендуется) или сборка на сервере
 
-## 6. Запустить систему
+Два способа. **Быстрый** скачивает готовые образы из GitHub Container Registry
+(собираются автоматически в GitHub Actions при пуше) — на VPS ничего не
+компилируется, разворачивание ~1–2 минуты. **Сборка на сервере** компилирует
+образы локально: на слабом VPS это 15–30 минут.
+
+### Вариант A — готовые образы из реестра (быстро) ⭐
+Предпосылки: workflow `.github/workflows/docker-images.yml` собрал образы (вкладка
+**Actions** в GitHub — зелёная галочка). Сделайте образы в GHCR **публичными**
+(Packages → banapal-api / banapal-web → Package settings → Change visibility → Public)
+**или** авторизуйтесь на сервере:
+`echo <GITHUB_PAT c read:packages> | docker login ghcr.io -u <логин> --password-stdin`.
+
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build
+export COMPOSE_FILE=docker-compose.registry.yml
+docker compose pull            # скачать готовые образы (быстро)
+./scripts/init-letsencrypt.sh  # выпустить TLS-сертификат
+docker compose up -d           # запустить
 ```
-Поднимутся: `db` (PostgreSQL 16), `api` (FastAPI, миграции применяются автоматически),
-`worker` (планировщик), `web` (nginx + собранный фронтенд, HTTPS), `certbot` (автопродление).
+
+### Вариант B — сборка образов на сервере (медленно на слабом VPS)
+```bash
+export COMPOSE_FILE=docker-compose.prod.yml
+./scripts/init-letsencrypt.sh  # соберёт образы и выпустит сертификат
+docker compose up -d --build
+```
+
+В обоих случаях поднимутся: `db` (PostgreSQL 16), `api` (FastAPI, миграции
+применяются автоматически), `worker` (планировщик), `web` (nginx + фронтенд, HTTPS),
+`certbot` (автопродление).
 
 Откройте **https://banapal.futuguru.com** → страница входа → логин/пароль из `.env`.
 
-## 7. Переключение на боевые данные
+> `init-letsencrypt.sh` требует, чтобы DNS (шаг 1) уже указывал на сервер и порт 80
+> был открыт. По умолчанию скрипт берёт `docker-compose.registry.yml`; для сборки
+> на сервере задайте `COMPOSE_FILE=docker-compose.prod.yml` (как в варианте B).
+
+## 6. Переключение на боевые данные
 1. Заполните доступы интеграций в `.env` (см. [INTEGRATIONS.md](INTEGRATIONS.md)).
 2. Установите `DATA_SOURCE=real`.
-3. Перезапустите и выполните первичную выгрузку:
+3. Перезапустите и выполните первичную выгрузку (`COMPOSE_FILE` уже экспортирован):
 ```bash
-docker compose -f docker-compose.prod.yml up -d
-docker compose -f docker-compose.prod.yml exec api python -m app.services.ingest
+docker compose up -d
+docker compose exec api python -m app.services.ingest
 ```
 Далее выгрузка и пересчёт идут по расписанию (планировщик `worker`).
 

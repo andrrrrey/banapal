@@ -1,0 +1,85 @@
+# ============================================================================
+#  Banapal — БЫСТРОЕ развёртывание из готовых образов (GitHub Container Registry).
+#  Образы собираются в GitHub Actions; на VPS они только скачиваются — без
+#  компиляции. Это в разы быстрее сборки на слабом сервере.
+#
+#  Использование (подробно — docs/DEPLOYMENT.md):
+#      export COMPOSE_FILE=docker-compose.registry.yml
+#      docker compose pull
+#      ./scripts/init-letsencrypt.sh        # первичный выпуск сертификата
+#      docker compose up -d
+#
+#  IMAGE_PREFIX задаётся в .env (по умолчанию ghcr.io/andrrrrey).
+# ============================================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    image: ${IMAGE_PREFIX:-ghcr.io/andrrrrey}/banapal-api:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      RUN_MODE: api
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  worker:
+    image: ${IMAGE_PREFIX:-ghcr.io/andrrrrey}/banapal-api:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      RUN_MODE: worker
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    image: ${IMAGE_PREFIX:-ghcr.io/andrrrrey}/banapal-web:latest
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./nginx/prod.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - certbot-etc:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot
+    ports:
+      - "80:80"
+      - "443:443"
+    command: >
+      /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done &
+      nginx -g 'daemon off;'"
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes:
+      - certbot-etc:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    entrypoint: >
+      /bin/sh -c "trap exit TERM; while :; do
+      certbot renew --webroot -w /var/www/certbot;
+      sleep 12h & wait $${!}; done"
+
+volumes:
+  postgres-data:
+  certbot-etc:
+  certbot-www:
