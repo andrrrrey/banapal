@@ -1,9 +1,19 @@
 // Построители опций ECharts — перенос конфигураций из прототипа.
-import * as echarts from "echarts";
 import type { EChartsOption } from "echarts";
 
 import type { FunnelStage, RevenueSeries, RomiByChannel, Source } from "@/api/dashboard";
 import type { CampaignBubble, RomiChannelChart } from "@/api/romi";
+
+// Вертикальный градиент для областей (объектная форма — без полного echarts).
+function vGradient(from: string, to: string) {
+  return {
+    type: "linear" as const, x: 0, y: 0, x2: 0, y2: 1,
+    colorStops: [
+      { offset: 0, color: from },
+      { offset: 1, color: to },
+    ],
+  };
+}
 
 const AXIS = {
   axisLine: { lineStyle: { color: "#E4E7EF" } },
@@ -53,12 +63,12 @@ export function revenueOption(s: RevenueSeries): EChartsOption {
       {
         name: "Выручка", type: "line", smooth: true, data: s.revenue, symbol: "none",
         lineStyle: { width: 2.5, color: "#635BFF" },
-        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: "rgba(99,91,255,.22)" }, { offset: 1, color: "rgba(99,91,255,0)" }]) },
+        areaStyle: { color: vGradient("rgba(99,91,255,.22)", "rgba(99,91,255,0)") },
       },
       {
         name: "Маржа", type: "line", smooth: true, data: s.margin, symbol: "none",
         lineStyle: { width: 2.5, color: "#12B76A" },
-        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: "rgba(18,183,106,.18)" }, { offset: 1, color: "rgba(18,183,106,0)" }]) },
+        areaStyle: { color: vGradient("rgba(18,183,106,.18)", "rgba(18,183,106,0)") },
       },
     ],
   };
