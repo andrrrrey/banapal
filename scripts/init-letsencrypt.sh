@@ -15,8 +15,8 @@ EMAIL="${LETSENCRYPT_EMAIL:?LETSENCRYPT_EMAIL не задан в .env}"
 COMPOSE="docker compose -f docker-compose.prod.yml"
 LIVE="/etc/letsencrypt/live/${DOMAIN}"
 
-echo "==> 1/5 Сборка образов"
-$COMPOSE build web certbot api >/dev/null
+echo "==> 1/5 Сборка образов (первый раз занимает несколько минут, прогресс ниже)"
+$COMPOSE build web api
 
 echo "==> 2/5 Временный самоподписанный сертификат (чтобы поднять nginx)"
 $COMPOSE run --rm --entrypoint "sh -c \

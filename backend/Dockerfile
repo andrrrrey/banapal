@@ -19,16 +19,22 @@ RUN pip install --upgrade pip && pip install .
 # Корневой и выпускающий сертификаты НУЦ Минцифры (Russian Trusted CA) —
 # нужны для работы с API российских банков и сервисов (раздел 7.2 ТЗ).
 # Добавляются и в системное хранилище, и в бандл certifi (его использует httpx).
-# Шаг устойчив к недоступности источника при сборке (можно доустановить позже).
+# Шаг НЕ должен блокировать сборку: строгие таймауты curl + проверка PEM;
+# при недоступности источника сборка продолжается (можно доустановить позже,
+# см. docs/ADMIN.md). Отключить попытку загрузки: --build-arg RUSSIAN_CA=off
+ARG RUSSIAN_CA=on
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*; \
-    if curl -fsSL https://gu-st.ru/content/Other/doc/russiantrustedca.pem \
-         -o /usr/local/share/ca-certificates/russian-trusted-ca.crt; then \
+    if [ "$RUSSIAN_CA" = "on" ] \
+       && curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 \
+            https://gu-st.ru/content/Other/doc/russiantrustedca.pem -o /tmp/rt.pem \
+       && grep -q "BEGIN CERTIFICATE" /tmp/rt.pem; then \
+      cp /tmp/rt.pem /usr/local/share/ca-certificates/russian-trusted-ca.crt; \
       update-ca-certificates; \
-      cat /usr/local/share/ca-certificates/russian-trusted-ca.crt \
-        >> "$(python -c 'import certifi; print(certifi.where())')"; \
+      cat /tmp/rt.pem >> "$(python -c 'import certifi; print(certifi.where())')"; \
+      echo "Russian Trusted CA установлен"; \
     else \
-      echo "WARN: не удалось скачать Russian Trusted CA — доустановите вручную (docs/DEPLOYMENT.md)"; \
+      echo "WARN: Russian Trusted CA не установлен при сборке — доустановите вручную (docs/ADMIN.md)"; \
     fi
 
 # Исходный код
