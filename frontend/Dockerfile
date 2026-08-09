@@ -3,7 +3,6 @@
 # --- Стадия сборки фронтенда ---
 FROM node:22-alpine AS build
 WORKDIR /app
-ENV NODE_OPTIONS=--max-old-space-size=2048
 COPY package.json package-lock.json* ./
 RUN --mount=type=cache,target=/root/.npm npm ci --prefer-offline --no-audit || npm install
 COPY . .
