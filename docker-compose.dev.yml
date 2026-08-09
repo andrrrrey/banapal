@@ -1,0 +1,23 @@
+# ============================================================================
+#  Banapal — оверрайд для локальной разработки.
+#  Запуск:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#  - БД доступна на localhost:5432
+#  - API с автоперезагрузкой и открытым портом 8000 (Swagger: /docs)
+#  - Исходники смонтированы для hot-reload
+# ============================================================================
+
+services:
+  db:
+    ports:
+      - "5432:5432"
+
+  api:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+
+  worker:
+    volumes:
+      - ./backend:/app

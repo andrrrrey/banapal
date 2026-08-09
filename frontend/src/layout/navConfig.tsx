@@ -1,0 +1,76 @@
+// Конфигурация навигации и мета страниц — соответствует прототипу (PAGE_META).
+import type { ComponentType } from "react";
+
+import {
+  AdminIcon,
+  AiIcon,
+  AnalyticsIcon,
+  DashboardIcon,
+  MonitorIcon,
+  RomiIcon,
+} from "./icons";
+
+export interface NavItem {
+  key: string;
+  path: string;
+  label: string;
+  subtitle: string;
+  section: string;
+  Icon: ComponentType;
+  badge?: number;
+}
+
+export const NAV_ITEMS: NavItem[] = [
+  {
+    key: "dashboard",
+    path: "/dashboard",
+    label: "Дашборд",
+    subtitle: "Единая картина по обработке лидов и деньгам",
+    section: "Обзор",
+    Icon: DashboardIcon,
+  },
+  {
+    key: "monitor",
+    path: "/monitor",
+    label: "Мониторинг Битрикс24",
+    subtitle: "Контроль регламента в реальном времени",
+    section: "Обзор",
+    Icon: MonitorIcon,
+    badge: 9,
+  },
+  {
+    key: "analytics",
+    path: "/analytics",
+    label: "Сквозная аналитика",
+    subtitle: "Реклама → визит → звонок → сделка → оплата → маржа",
+    section: "Маркетинг",
+    Icon: AnalyticsIcon,
+  },
+  {
+    key: "romi",
+    path: "/romi",
+    label: "ROMI и рекомендации",
+    subtitle: "Возврат на рекламу и оптимизация бюджета",
+    section: "Маркетинг",
+    Icon: RomiIcon,
+  },
+  {
+    key: "ai",
+    path: "/ai",
+    label: "AI-инсайты",
+    subtitle: "Интерпретация, закономерности и риски",
+    section: "Маркетинг",
+    Icon: AiIcon,
+  },
+  {
+    key: "admin",
+    path: "/admin",
+    label: "Админ-панель регламента",
+    subtitle: "Настройка параметров контроля без разработчика",
+    section: "Настройка",
+    Icon: AdminIcon,
+  },
+];
+
+// Порядок секций в сайдбаре.
+export const NAV_SECTIONS = ["Обзор", "Маркетинг", "Настройка"];
