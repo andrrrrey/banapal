@@ -10,7 +10,9 @@ import {
   type IntegrationsConfig,
   useCheckAll,
   useCheckIntegration,
+  useGenerateAi,
   useIntegrations,
+  useRecompute,
   useSaveIntegrations,
 } from "@/api/integrations";
 
@@ -47,10 +49,7 @@ function FieldInput({
   value: string;
   onChange: (v: string) => void;
 }) {
-  const savedHint = field.secret && field.filled;
-  const placeholder = savedHint
-    ? `Сохранено (${field.value}). Оставьте пустым, чтобы не менять`
-    : field.placeholder || "Не задано";
+  const placeholder = field.placeholder || "Не задано";
 
   return (
     <div className="field intg-field">
@@ -70,11 +69,12 @@ function FieldInput({
   );
 }
 
-/* --- Инициализация черновика из конфигурации --- */
+/* --- Инициализация черновика из конфигурации (поля предзаполнены реальными
+   значениями — их видно и можно редактировать) --- */
 function initialDraft(cfg: IntegrationsConfig): Record<string, string> {
   const d: Record<string, string> = {};
   for (const p of cfg.providers) {
-    for (const f of p.fields) d[f.key] = f.secret ? "" : f.value;
+    for (const f of p.fields) d[f.key] = f.value;
   }
   return d;
 }
@@ -85,6 +85,9 @@ export default function IntegrationsPage() {
   const checkOne = useCheckIntegration();
   const checkAll = useCheckAll();
   const { message } = App.useApp();
+
+  const recompute = useRecompute();
+  const generateAi = useGenerateAi();
 
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [dataSource, setDataSource] = useState<DataSource>("mock");
@@ -105,8 +108,7 @@ export default function IntegrationsPage() {
     if (dataSource !== cfg.data_source) return true;
     for (const p of cfg.providers) {
       for (const f of p.fields) {
-        const initial = f.secret ? "" : f.value;
-        if ((draft[f.key] ?? "") !== initial) return true;
+        if ((draft[f.key] ?? "") !== f.value) return true;
       }
     }
     return false;
@@ -127,11 +129,8 @@ export default function IntegrationsPage() {
     for (const p of cfg.providers) {
       for (const f of p.fields) {
         const cur = draft[f.key] ?? "";
-        if (f.secret) {
-          if (cur.trim() !== "") values[f.key] = cur; // пустой секрет = «не менять»
-        } else if (cur !== f.value) {
-          values[f.key] = cur; // несекрет можно и очистить пустой строкой
-        }
+        // Присылаем только изменённые поля; пустая строка очищает значение.
+        if (cur !== f.value) values[f.key] = cur;
       }
     }
     return values;
@@ -175,6 +174,32 @@ export default function IntegrationsPage() {
     }
   };
 
+  const onRecompute = async () => {
+    try {
+      const res = await recompute.mutateAsync();
+      message.success(
+        res.mode === "real"
+          ? "Пересчёт по боевым источникам выполнен, дашборд обновлён"
+          : "Демо-данные пересобраны, дашборд обновлён",
+      );
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  };
+
+  const onGenerateAi = async () => {
+    try {
+      const res = await generateAi.mutateAsync();
+      if (res.generated) {
+        message.success(`AI-советы обновлены · карточек: ${res.count ?? 0}`);
+      } else {
+        message.warning("AI-интеграция не подключена — генерация пропущена");
+      }
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  };
+
   return (
     <>
       {/* Источник данных */}
@@ -197,6 +222,48 @@ export default function IntegrationsPage() {
               ? "Система работает на демонстрационных данных прототипа. Доступы ниже можно заполнить заранее."
               : "Система использует боевые интеграции. Заполните и проверьте доступы ниже — иначе выгрузка данных завершится ошибкой."}
           </p>
+        </div>
+      </div>
+
+      {/* Обслуживание данных: ручной пересчёт и генерация AI */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-h">
+          <h3>Обслуживание данных</h3>
+          <span className="sub">ручной пересчёт и генерация AI</span>
+        </div>
+        <div className="card-p">
+          <div className="intg-maint">
+            <div className="intg-maint-row">
+              <div className="st">
+                <b>Пересчитать данные и обновить дашборд</b>
+                <span>
+                  {cfg.data_source === "real"
+                    ? "Выгружает источники и пересобирает витрины по боевым интеграциям."
+                    : "Пересобирает демонстрационные данные для согласованного отображения."}
+                </span>
+              </div>
+              <Button onClick={onRecompute} loading={recompute.isPending}>
+                Пересчитать
+              </Button>
+            </div>
+            <div className="intg-maint-row">
+              <div className="st">
+                <b>Сгенерировать AI-советы и отчёты</b>
+                <span>
+                  {cfg.ai_configured
+                    ? "Запускает генерацию инсайтов через подключённую AI-интеграцию."
+                    : "Недоступно: подключите AI-интеграцию (API-ключ и Base URL LLM) ниже."}
+                </span>
+              </div>
+              <Button
+                onClick={onGenerateAi}
+                loading={generateAi.isPending}
+                disabled={!cfg.ai_configured}
+              >
+                Сгенерировать AI
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 

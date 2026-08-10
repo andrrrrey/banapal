@@ -17,6 +17,7 @@ from app.api.deps import require_session
 from app.core.db import get_session
 from app.services import integrations_check as checker
 from app.services import integrations_config as cfg
+from app.services import maintenance
 
 router = APIRouter(
     prefix="/integrations",
@@ -79,3 +80,40 @@ async def check_one(
     """Проверяет подключение одной интеграции."""
     await cfg.apply_overrides_from_db(session)
     return await run_in_threadpool(checker.run_check, provider)
+
+
+@router.post("/recompute")
+async def recompute() -> dict[str, Any]:
+    """Пересчитывает данные и витрины дашборда (real → выгрузка; mock → демо)."""
+    try:
+        return await run_in_threadpool(maintenance.run_blocking, maintenance.recompute)
+    except Exception as exc:  # noqa: BLE001 — сетевые/данные ошибки → 502
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Пересчёт не выполнен: {exc}",
+        ) from exc
+
+
+@router.post("/ai/generate")
+async def ai_generate(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Запускает генерацию AI-инсайтов (только при подключённой AI-интеграции)."""
+    await cfg.apply_overrides_from_db(session)
+    conf = await cfg.get_config(session)
+    if not conf.get("ai_configured"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="AI-интеграция не настроена (укажите API-ключ и Base URL LLM).",
+        )
+    try:
+        result = await run_in_threadpool(maintenance.run_blocking, maintenance.generate_ai)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"LLM вернул некорректный ответ: {exc}",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — сетевые ошибки LLM → 502
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Ошибка генерации: {exc}",
+        ) from exc
+    return result

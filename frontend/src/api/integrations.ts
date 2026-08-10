@@ -27,7 +27,20 @@ export interface IntegrationProvider {
 
 export interface IntegrationsConfig {
   data_source: DataSource;
+  ai_configured: boolean;
   providers: IntegrationProvider[];
+}
+
+export interface RecomputeResult {
+  ok: boolean;
+  mode: DataSource;
+  stats: Record<string, unknown>;
+}
+
+export interface AiGenerateResult {
+  generated: boolean;
+  count?: number;
+  reason?: string;
 }
 
 export type CheckStatus = "ok" | "error" | "not_configured";
@@ -82,5 +95,29 @@ export function useCheckIntegration() {
 export function useCheckAll() {
   return useMutation({
     mutationFn: () => api.post<Record<string, CheckResult>>("/integrations/check"),
+  });
+}
+
+// Ручной пересчёт данных/витрин — после успеха обновляем все витрины дашборда.
+export function useRecompute() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<RecomputeResult>("/integrations/recompute"),
+    onSuccess: () => {
+      for (const key of ["dashboard", "monitor", "analytics", "romi", "ai"]) {
+        qc.invalidateQueries({ queryKey: [key] });
+      }
+    },
+  });
+}
+
+// Ручной запуск генерации AI-инсайтов.
+export function useGenerateAi() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<AiGenerateResult>("/integrations/ai/generate"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ai"] });
+    },
   });
 }

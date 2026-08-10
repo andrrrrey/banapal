@@ -7,25 +7,141 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+import json
+
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import client as llm
+from app.ai import prompts
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.models import AiInsight, Channel
+from app.models import AiInsight, Baseline, Channel
 
 logger = get_logger("banapal.ai")
 
 
 async def _analytics_summary(session: AsyncSession) -> dict:
     channels = (await session.execute(select(Channel))).scalars().all()
+    baselines = (await session.execute(select(Baseline))).scalars().all()
     return {
         "channels": [
-            {"name": c.name, "spend": c.spend, "revenue": c.revenue, "margin": c.margin}
+            {"name": c.name, "spend": c.spend, "revenue": c.revenue, "margin": c.margin,
+             "leads": c.leads, "deals": c.deals, "payments": c.payments}
             for c in channels
-        ]
+        ],
+        "baseline": {b.key: b.value for b in baselines},
     }
+
+
+# Сопоставление «важности» из ответа LLM с классами оформления карточки инсайта.
+_SEV_RULES: list[tuple[tuple[str, ...], tuple[str, str, str, str]]] = [
+    (("риск", "risk", "утеч", "leak"), ("Риск", "t-red", "i-red", "alert")),
+    (("деньг", "маржа", "money", "убыт"), ("Деньги", "t-red", "i-red", "alert")),
+    (("возмож", "opportun", "рост", "growth"), ("Возможность", "t-green", "i-green", "up")),
+    (("оптимиз", "optim", "эффект"), ("Оптимизация", "t-blue", "i-indigo", "net")),
+]
+_SEV_DEFAULT = ("Наблюдение", "t-amber", "i-amber", "clock")
+
+
+def _map_sev(text: str) -> tuple[str, str, str, str]:
+    low = (text or "").lower()
+    for keys, meta in _SEV_RULES:
+        if any(k in low for k in keys):
+            return meta
+    return _SEV_DEFAULT
+
+
+def _parse_items(raw: str) -> list[dict]:
+    """Толерантный разбор ответа LLM в список объектов-инсайтов."""
+    s = (raw or "").strip()
+    if s.startswith("```"):  # снимаем markdown-обёртку ```json ... ```
+        s = s.strip("`")
+        nl = s.find("\n")
+        if nl != -1:
+            s = s[nl + 1:]
+    start, end = s.find("["), s.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        s = s[start:end + 1]
+    try:
+        data = json.loads(s)
+    except (ValueError, TypeError):
+        return []
+    if isinstance(data, dict):
+        for key in ("insights", "items", "data", "инсайты"):
+            if isinstance(data.get(key), list):
+                return [x for x in data[key] if isinstance(x, dict)]
+        return [data]
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    return []
+
+
+def _pick(item: dict, *keys: str, default: str = "") -> str:
+    for k in keys:
+        v = item.get(k)
+        if v:
+            return str(v)
+    return default
+
+
+async def generate_insights(session: AsyncSession) -> dict:
+    """Генерирует AI-инсайты через LLM по сводке аналитики и сохраняет их.
+
+    Требует настроенной AI-интеграции (LLM_API_KEY, LLM_BASE_URL). Заменяет
+    текущий набор инсайтов. Возвращает статус и число сохранённых карточек.
+    """
+    if not llm.is_configured():
+        return {"generated": False, "reason": "llm_not_configured"}
+
+    summary = await _analytics_summary(session)
+    client = llm.LLMClient()
+    system = (
+        prompts.SYSTEM_PROMPT
+        + " Верни СТРОГО валидный JSON-массив без markdown и пояснений."
+    )
+    user = (
+        prompts.insights_prompt(summary)
+        + "\n\nФормат ответа — JSON-массив объектов с полями: "
+        '"title" (заголовок), "severity" (одно из: Риск, Деньги, Возможность, '
+        'Оптимизация, Наблюдение), "surface" (что видно на дашборде), '
+        '"text" (объяснение), "rec" (рекомендация), "sources" (массив источников), '
+        '"confidence" (высокая|средняя|низкая). Только JSON.'
+    )
+
+    raw = client.complete(system, user)  # синхронный вызов LLM
+    items = _parse_items(raw)
+    if not items:
+        raise ValueError("LLM вернул ответ, который не удалось разобрать как JSON-инсайты.")
+
+    prepared: list[AiInsight] = []
+    for i, it in enumerate(items[:6]):
+        title = _pick(it, "title", "заголовок")
+        if not title:
+            continue
+        sev_label, sev_class, ic, icon = _map_sev(_pick(it, "severity", "важность", "type"))
+        src = it.get("sources") or it.get("src") or it.get("источники") or []
+        if isinstance(src, str):
+            src = [src]
+        prepared.append(AiInsight(
+            position=i, sev_label=sev_label, sev_class=sev_class, ic=ic, icon=icon,
+            title=title[:255], time="сгенерировано сейчас",
+            surface=_pick(it, "surface", "на_дашборде", "dashboard"),
+            text=_pick(it, "text", "explanation", "объяснение"),
+            rec=_pick(it, "rec", "recommendation", "рекомендация"),
+            src=[str(x) for x in src][:6],
+            conf=_pick(it, "confidence", "достоверность", default="средняя"),
+            dep=bool(it.get("dep")),
+        ))
+
+    if not prepared:
+        raise ValueError("LLM не вернул ни одного корректного инсайта.")
+
+    await session.execute(delete(AiInsight))
+    session.add_all(prepared)
+    await session.commit()
+    logger.info("AI-инсайты сгенерированы через LLM: %d", len(prepared))
+    return {"generated": True, "count": len(prepared)}
 
 
 async def refresh_insights(session: AsyncSession) -> dict:
