@@ -206,6 +206,11 @@ async def get_config(session: AsyncSession) -> dict:
     stored_ds = raw.get(_DS_KEY)
     data_source = stored_ds if stored_ds in ("mock", "real") else settings.data_source
 
+    # AI считается подключённым при заданных ключе и base URL (как в llm.is_configured).
+    ai_configured = bool(
+        _current_value(overrides, "llm_api_key") and _current_value(overrides, "llm_base_url")
+    )
+
     providers_out: list[dict] = []
     for p in PROVIDERS:
         fields_out: list[dict] = []
@@ -241,6 +246,7 @@ async def get_config(session: AsyncSession) -> dict:
 
     return {
         "data_source": data_source,
+        "ai_configured": ai_configured,
         "providers": providers_out,
     }
 
