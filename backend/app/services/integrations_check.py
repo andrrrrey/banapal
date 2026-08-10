@@ -23,6 +23,9 @@ logger = get_logger("banapal.integrations")
 
 # Короткие таймауты: тест подключения не должен «висеть».
 _TIMEOUT = httpx.Timeout(12.0, connect=6.0)
+# Некоторые API отвечают редиректом (напр. Calltouch) — по умолчанию httpx их не
+# следует, поэтому включаем следование во всех проверках.
+_FOLLOW = True
 
 
 def _ok(message: str, detail: str = "") -> dict:
@@ -52,7 +55,9 @@ def check_bitrix24() -> dict:
     if not url:
         return _missing("Не указан URL входящего вебхука.")
     try:
-        resp = httpx.post(f"{url}/profile.json", json={}, timeout=_TIMEOUT)
+        resp = httpx.post(
+            f"{url}/profile.json", json={}, timeout=_TIMEOUT, follow_redirects=_FOLLOW,
+        )
     except Exception as exc:  # noqa: BLE001 — любой сбой = ошибка проверки
         return _err("Ошибка соединения с Битрикс24.", _describe_exc(exc))
     if resp.status_code == 401:
@@ -93,7 +98,7 @@ def check_yandex_direct() -> dict:
     try:
         resp = httpx.post(
             "https://api.direct.yandex.com/json/v5/campaigns",
-            headers=headers, json=body, timeout=_TIMEOUT,
+            headers=headers, json=body, timeout=_TIMEOUT, follow_redirects=_FOLLOW,
         )
     except Exception as exc:  # noqa: BLE001
         return _err("Ошибка соединения с API Директа.", _describe_exc(exc))
@@ -132,7 +137,7 @@ def check_yandex_metrika() -> dict:
     try:
         resp = httpx.get(
             "https://api-metrika.yandex.net/stat/v1/data",
-            params=params, headers=headers, timeout=_TIMEOUT,
+            params=params, headers=headers, timeout=_TIMEOUT, follow_redirects=_FOLLOW,
         )
     except Exception as exc:  # noqa: BLE001
         return _err("Ошибка соединения с API Метрики.", _describe_exc(exc))
@@ -164,14 +169,21 @@ def check_calltouch() -> dict:
     try:
         resp = httpx.get(
             f"https://api.calltouch.ru/calls-service/RestAPI/{cid}/calls-diary/calls",
-            params=params, timeout=_TIMEOUT,
+            params=params, timeout=_TIMEOUT, follow_redirects=_FOLLOW,
         )
     except Exception as exc:  # noqa: BLE001
         return _err("Ошибка соединения с API Calltouch.", _describe_exc(exc))
-    if resp.status_code == 200:
-        return _ok("Токен Calltouch принят.")
     if resp.status_code in (401, 403):
         return _err("Токен недействителен или нет прав (проверьте clientApiId).")
+    ctype = resp.headers.get("content-type", "")
+    if resp.status_code == 200 and "json" in ctype:
+        return _ok("Токен Calltouch принят.")
+    if resp.status_code == 200:
+        # Редирект привёл на HTML-страницу (обычно неверный токен или иной тип доступа).
+        return _err(
+            "Неверный токен или требуется другой доступ Calltouch.",
+            "API вернул не-JSON ответ — проверьте clientApiId (профессиональная версия).",
+        )
     return _err(f"API Calltouch вернул HTTP {resp.status_code}.")
 
 
@@ -183,7 +195,7 @@ def check_moysklad() -> dict:
     try:
         resp = httpx.get(
             "https://api.moysklad.ru/api/remap/1.2/context/employee",
-            headers=headers, timeout=_TIMEOUT,
+            headers=headers, timeout=_TIMEOUT, follow_redirects=_FOLLOW,
         )
     except Exception as exc:  # noqa: BLE001
         return _err("Ошибка соединения с API МойСклад.", _describe_exc(exc))
@@ -206,7 +218,9 @@ def check_llm() -> dict:
         return _missing("Не указан base URL или API-ключ LLM.")
     headers = {"Authorization": f"Bearer {key}"}
     try:
-        resp = httpx.get(f"{base}/models", headers=headers, timeout=_TIMEOUT)
+        resp = httpx.get(
+            f"{base}/models", headers=headers, timeout=_TIMEOUT, follow_redirects=_FOLLOW,
+        )
     except Exception as exc:  # noqa: BLE001
         return _err("Ошибка соединения с LLM API.", _describe_exc(exc))
     if resp.status_code == 200:

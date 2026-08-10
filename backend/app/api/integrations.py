@@ -56,13 +56,26 @@ async def put_integrations(
     )
 
 
+@router.get("/data-source")
+async def get_data_source(session: AsyncSession = Depends(get_session)) -> dict[str, str]:
+    """Текущий источник данных (mock|real) — из БД, единый для всех воркеров."""
+    return {"data_source": await cfg.load_data_source(session)}
+
+
 @router.post("/check")
-async def check_all() -> dict[str, Any]:
+async def check_all(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     """Проверяет подключение ко всем интеграциям сразу."""
+    # Синхронизируем доступы из БД в этот воркер, чтобы проверка использовала
+    # последние сохранённые значения (а не устаревшие из памяти другого воркера).
+    await cfg.apply_overrides_from_db(session)
     return await run_in_threadpool(checker.run_all_checks)
 
 
 @router.post("/{provider}/check")
-async def check_one(provider: str) -> dict[str, Any]:
+async def check_one(
+    provider: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
     """Проверяет подключение одной интеграции."""
+    await cfg.apply_overrides_from_db(session)
     return await run_in_threadpool(checker.run_check, provider)
