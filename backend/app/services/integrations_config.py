@@ -156,6 +156,10 @@ PROVIDERS: list[Provider] = [
 _FIELD_INDEX: dict[str, Field] = {f.key: f for p in PROVIDERS for f in p.fields}
 FIELD_KEYS: frozenset[str] = frozenset(_FIELD_INDEX)
 
+# Служебный ключ в JSON-данных строки для хранения выбранного источника данных
+# (mock | real). Не входит в FIELD_KEYS, поэтому не трактуется как креды.
+_DS_KEY = "__data_source__"
+
 
 def mask_value(value: str, *, secret: bool) -> str:
     """Замаскированное представление для UI (секрет → `•••• + хвост`)."""
@@ -172,11 +176,21 @@ async def _load_row(session: AsyncSession) -> IntegrationSettings | None:
 
 
 async def load_overrides(session: AsyncSession) -> dict[str, str]:
-    """Значения из БД (без маскирования). Пусто, если строки ещё нет."""
+    """Значения кредов из БД (без маскирования). Пусто, если строки ещё нет."""
     row = await _load_row(session)
     if not row or not isinstance(row.data, dict):
         return {}
     return {k: v for k, v in row.data.items() if k in FIELD_KEYS}
+
+
+async def load_data_source(session: AsyncSession) -> str:
+    """Источник данных из БД (mock|real), иначе — текущее значение из settings/env."""
+    row = await _load_row(session)
+    if row and isinstance(row.data, dict):
+        stored = row.data.get(_DS_KEY)
+        if stored in ("mock", "real"):
+            return stored
+    return settings.data_source
 
 
 def _current_value(overrides: dict[str, str], key: str) -> str:
@@ -188,7 +202,11 @@ def _current_value(overrides: dict[str, str], key: str) -> str:
 
 async def get_config(session: AsyncSession) -> dict:
     """Структура для UI: провайдеры, поля (маскированные), признаки заполнения."""
-    overrides = await load_overrides(session)
+    row = await _load_row(session)
+    raw = row.data if row and isinstance(row.data, dict) else {}
+    overrides = {k: v for k, v in raw.items() if k in FIELD_KEYS}
+    stored_ds = raw.get(_DS_KEY)
+    data_source = stored_ds if stored_ds in ("mock", "real") else settings.data_source
 
     providers_out: list[dict] = []
     for p in PROVIDERS:
@@ -222,7 +240,7 @@ async def get_config(session: AsyncSession) -> dict:
         })
 
     return {
-        "data_source": settings.data_source,
+        "data_source": data_source,
         "providers": providers_out,
     }
 
@@ -235,10 +253,19 @@ def _apply_to_settings(values: dict[str, str]) -> None:
 
 
 async def apply_overrides_from_db(session: AsyncSession) -> int:
-    """Стартовый накат: значения из БД поверх env. Возвращает число полей."""
-    overrides = await load_overrides(session)
+    """Накат из БД поверх env: креды + источник данных. Возвращает число полей.
+
+    Вызывается на старте каждого процесса (api/worker/ingest), чтобы сохранённые
+    через UI доступы и режим применялись одинаково во всех воркерах."""
+    row = await _load_row(session)
+    if not row or not isinstance(row.data, dict):
+        return 0
+    overrides = {k: v for k, v in row.data.items() if k in FIELD_KEYS}
     if overrides:
         _apply_to_settings(overrides)
+    stored_ds = row.data.get(_DS_KEY)
+    if stored_ds in ("mock", "real"):
+        settings.data_source = stored_ds  # type: ignore[assignment]
     return len(overrides)
 
 
@@ -278,19 +305,23 @@ async def save_config(
             data[key] = ""
             applied[key] = ""
 
+    # Источник данных храним в служебном ключе — чтобы он переживал перезапуск и
+    # был одинаков во всех воркерах (в память пишем ниже).
+    if data_source in ("mock", "real"):
+        data[_DS_KEY] = data_source
+
     if row is None:
         row = IntegrationSettings(id=1, data=data)
         session.add(row)
     else:
         row.data = data
 
-    if data_source in ("mock", "real"):
-        settings.data_source = data_source  # type: ignore[assignment]
-
     await session.commit()
 
-    # Немедленно активируем сохранённые креды в текущем процессе.
+    # Немедленно активируем сохранённое в текущем процессе.
     _apply_to_settings(applied)
+    if data_source in ("mock", "real"):
+        settings.data_source = data_source  # type: ignore[assignment]
 
     logger.info(
         "Настройки интеграций сохранены: полей=%d, data_source=%s",

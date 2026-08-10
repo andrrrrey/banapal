@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 
 import { useLogout, useMe } from "@/api/auth";
+import { useDataSource } from "@/api/integrations";
 import { NAV_ITEMS } from "./navConfig";
 
 function useMoscowClock() {
@@ -30,6 +31,8 @@ export function Topbar() {
   const { time, date } = useMoscowClock();
   const logout = useLogout();
   const me = useMe();
+  const ds = useDataSource();
+  const isReal = ds.data?.data_source === "real";
 
   const item = NAV_ITEMS.find((i) => location.pathname.startsWith(i.path)) ?? NAV_ITEMS[0];
 
@@ -40,9 +43,9 @@ export function Topbar() {
         <p>{item.subtitle}</p>
       </div>
       <div className="spacer" />
-      <div className="demo-pill">
+      <div className={`demo-pill${isReal ? " live" : ""}`}>
         <span className="dot" />
-        Демо-данные
+        {isReal ? "Боевые интеграции" : "Демо-данные"}
       </div>
       <div className="clock">
         <b>{time}</b>

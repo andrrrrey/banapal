@@ -37,13 +37,10 @@ def recompute_analytics() -> None:
     """Ночной пересчёт сквозной аналитики и ROMI по методике (раздел 4 ТЗ).
 
     В боевом режиме выгружает источники и пересобирает витрины; в mock демо-данные
-    статичны — пересчёт не требуется.
+    статичны — пересчёт не требуется. Источник данных и доступы читаются из БД внутри
+    ingest.main() (apply_overrides_from_db), поэтому переключение режима в UI
+    подхватывается без перезапуска воркера.
     """
-    from app.core.config import settings
-
-    if settings.data_source != "real":
-        logger.info("Ночной пересчёт аналитики — mock, пропущено")
-        return
     try:
         import asyncio
 
@@ -80,7 +77,25 @@ def build_scheduler() -> BackgroundScheduler:
     return scheduler
 
 
+def _sync_settings_from_db() -> None:
+    """Применяет сохранённые через UI доступы/режим к настройкам процесса."""
+    try:
+        import asyncio
+
+        from app.core.db import SessionLocal
+        from app.services.integrations_config import apply_overrides_from_db
+
+        async def _run() -> None:
+            async with SessionLocal() as session:
+                await apply_overrides_from_db(session)
+
+        asyncio.run(_run())
+    except Exception as exc:  # noqa: BLE001 — старт воркера не должен падать
+        logger.warning("UI-настройки интеграций не применены: %s", exc)
+
+
 def main() -> None:
+    _sync_settings_from_db()
     logger.info("Старт worker :: env=%s data_source=%s", settings.app_env, settings.data_source)
     scheduler = build_scheduler()
     scheduler.start()

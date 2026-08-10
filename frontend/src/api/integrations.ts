@@ -53,12 +53,22 @@ export function useIntegrations() {
   });
 }
 
+// Лёгкий запрос текущего источника данных (для плашки режима в топбаре).
+export function useDataSource() {
+  return useQuery<{ data_source: DataSource }>({
+    queryKey: ["integrations", "data-source"],
+    queryFn: () => api.get("/integrations/data-source"),
+    staleTime: 30_000,
+  });
+}
+
 export function useSaveIntegrations() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (payload: SavePayload) => api.put<IntegrationsConfig>("/integrations", payload),
     onSuccess: (data) => {
       qc.setQueryData(["integrations"], data);
+      qc.setQueryData(["integrations", "data-source"], { data_source: data.data_source });
     },
   });
 }

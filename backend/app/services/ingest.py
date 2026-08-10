@@ -140,7 +140,11 @@ async def ingest_all(session: AsyncSession) -> dict:
 
 
 async def main() -> None:
+    from app.services.integrations_config import apply_overrides_from_db
+
     async with SessionLocal() as session:
+        # Применяем доступы/режим, сохранённые через UI (иначе процесс видит только env).
+        await apply_overrides_from_db(session)
         await ingest_all(session)
 
 

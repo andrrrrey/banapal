@@ -76,6 +76,8 @@ body {
   font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 20px; border: 1px solid #E4D8F7;
 }
 .demo-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--violet); box-shadow: 0 0 0 3px rgba(158,119,237,.2); }
+.demo-pill.live { background: var(--green-soft); color: #0A8A50; border-color: #C7EBD8; }
+.demo-pill.live .dot { background: var(--green); box-shadow: 0 0 0 3px rgba(18,183,106,.2); }
 .clock { font-size: 12.5px; color: var(--muted); text-align: right; line-height: 1.35; }
 .clock b { color: var(--ink); font-weight: 600; }
 
