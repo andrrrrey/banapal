@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     yandex_oauth_token: str = ""
     yandex_direct_login: str = ""
     yandex_metrika_counter_id: str = ""
+    calltouch_site_id: str = ""
     calltouch_client_api_id: str = ""
     moysklad_token: str = ""
 

@@ -47,10 +47,7 @@ function FieldInput({
   value: string;
   onChange: (v: string) => void;
 }) {
-  const savedHint = field.secret && field.filled;
-  const placeholder = savedHint
-    ? `Сохранено (${field.value}). Оставьте пустым, чтобы не менять`
-    : field.placeholder || "Не задано";
+  const placeholder = field.placeholder || "Не задано";
 
   return (
     <div className="field intg-field">
@@ -70,11 +67,12 @@ function FieldInput({
   );
 }
 
-/* --- Инициализация черновика из конфигурации --- */
+/* --- Инициализация черновика из конфигурации (поля предзаполнены реальными
+   значениями — их видно и можно редактировать) --- */
 function initialDraft(cfg: IntegrationsConfig): Record<string, string> {
   const d: Record<string, string> = {};
   for (const p of cfg.providers) {
-    for (const f of p.fields) d[f.key] = f.secret ? "" : f.value;
+    for (const f of p.fields) d[f.key] = f.value;
   }
   return d;
 }
@@ -105,8 +103,7 @@ export default function IntegrationsPage() {
     if (dataSource !== cfg.data_source) return true;
     for (const p of cfg.providers) {
       for (const f of p.fields) {
-        const initial = f.secret ? "" : f.value;
-        if ((draft[f.key] ?? "") !== initial) return true;
+        if ((draft[f.key] ?? "") !== f.value) return true;
       }
     }
     return false;
@@ -127,11 +124,8 @@ export default function IntegrationsPage() {
     for (const p of cfg.providers) {
       for (const f of p.fields) {
         const cur = draft[f.key] ?? "";
-        if (f.secret) {
-          if (cur.trim() !== "") values[f.key] = cur; // пустой секрет = «не менять»
-        } else if (cur !== f.value) {
-          values[f.key] = cur; // несекрет можно и очистить пустой строкой
-        }
+        // Присылаем только изменённые поля; пустая строка очищает значение.
+        if (cur !== f.value) values[f.key] = cur;
       }
     }
     return values;

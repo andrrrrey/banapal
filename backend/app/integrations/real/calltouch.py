@@ -35,6 +35,8 @@ def parse_calls(payload: dict) -> list[dict]:
 class RealCalltouchAdapter:
     def fetch_calls(self) -> list[dict]:
         cid = settings.calltouch_client_api_id
+        # В адресе запроса Calltouch — siteId (ID проекта), токен передаётся параметром.
+        site = settings.calltouch_site_id or cid
         date_to = datetime.now(UTC).date()
         date_from = date_to - timedelta(days=30)
         out: list[dict] = []
@@ -49,7 +51,7 @@ class RealCalltouchAdapter:
                     "limit": _PAGE,
                 }
                 resp = request(
-                    "GET", f"{BASE}/{cid}/calls-diary/calls", client=client, params=params
+                    "GET", f"{BASE}/{site}/calls-diary/calls", client=client, params=params
                 )
                 payload = resp.json()
                 batch = parse_calls(payload)

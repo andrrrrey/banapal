@@ -106,6 +106,14 @@ PROVIDERS: list[Provider] = [
         docs="ЛК Calltouch → Интеграции → API (профессиональная версия)",
         fields=[
             Field(
+                "calltouch_site_id",
+                "ID проекта (siteId)",
+                "Числовой идентификатор проекта/сайта в Calltouch — он идёт в адрес "
+                "запроса. Без него API отвечает редиректом (не-JSON).",
+                secret=False,
+                placeholder="12345",
+            ),
+            Field(
                 "calltouch_client_api_id",
                 "API-токен (clientApiId)",
                 "Токен профессиональной версии Calltouch.",
@@ -159,16 +167,6 @@ FIELD_KEYS: frozenset[str] = frozenset(_FIELD_INDEX)
 # Служебный ключ в JSON-данных строки для хранения выбранного источника данных
 # (mock | real). Не входит в FIELD_KEYS, поэтому не трактуется как креды.
 _DS_KEY = "__data_source__"
-
-
-def mask_value(value: str, *, secret: bool) -> str:
-    """Замаскированное представление для UI (секрет → `•••• + хвост`)."""
-    if not value:
-        return ""
-    if not secret:
-        return value
-    tail = value[-4:] if len(value) >= 8 else ""
-    return f"••••{tail}" if tail else "••••••••"
 
 
 async def _load_row(session: AsyncSession) -> IntegrationSettings | None:
@@ -226,8 +224,10 @@ async def get_config(session: AsyncSession) -> dict:
                 "secret": f.secret,
                 "placeholder": f.placeholder,
                 "filled": is_filled,
-                # Секрет наружу не отдаём — только маску; несекрет отдаём как есть.
-                "value": mask_value(raw, secret=f.secret),
+                # Возвращаем реальное значение, чтобы поле было предзаполнено и его
+                # было видно/можно редактировать (страница заменяет правку .env).
+                # Секреты отображаются в поле-пароле (точки + кнопка «показать»).
+                "value": raw,
             })
         configured = filled_count >= len(required) if required else False
         providers_out.append({
@@ -278,9 +278,8 @@ async def save_config(
 ) -> dict:
     """Сохраняет доступы в БД и накатывает на живой settings.
 
-    - values: {ключ: значение}. Пустая строка для секрета игнорируется (чтобы не
-      затирать токен) — для очистки секрета передавайте его ключ в `clear`.
-      Несекретные поля можно очищать пустой строкой.
+    - values: {ключ: значение}. Присылаются только изменённые поля; пустая строка
+      очищает значение, непустая — задаёт новое.
     - clear: список ключей, которые нужно очистить принудительно.
     - data_source: mock | real (переключение источника данных).
     """
@@ -289,14 +288,12 @@ async def save_config(
 
     applied: dict[str, str] = {}
 
+    # Поля предзаполнены реальными значениями, поэтому фронтенд присылает только
+    # изменённые: пустая строка = очистка, непустая = новое значение.
     for key, value in (values or {}).items():
         if key not in FIELD_KEYS:
             continue
-        f = _FIELD_INDEX[key]
         text = (value or "").strip()
-        if f.secret and not text:
-            # Пустой секрет — «оставить как есть».
-            continue
         data[key] = text
         applied[key] = text
 

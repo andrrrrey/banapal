@@ -155,8 +155,11 @@ def check_yandex_metrika() -> dict:
 
 def check_calltouch() -> dict:
     cid = settings.calltouch_client_api_id or ""
+    site = settings.calltouch_site_id or ""
     if not cid:
-        return _missing("Не указан API-токен Calltouch.")
+        return _missing("Не указан API-токен Calltouch (clientApiId).")
+    if not site:
+        return _missing("Не указан ID проекта Calltouch (siteId).")
     date_to = datetime.now(UTC).date()
     date_from = date_to - timedelta(days=1)
     params = {
@@ -168,21 +171,21 @@ def check_calltouch() -> dict:
     }
     try:
         resp = httpx.get(
-            f"https://api.calltouch.ru/calls-service/RestAPI/{cid}/calls-diary/calls",
+            f"https://api.calltouch.ru/calls-service/RestAPI/{site}/calls-diary/calls",
             params=params, timeout=_TIMEOUT, follow_redirects=_FOLLOW,
         )
     except Exception as exc:  # noqa: BLE001
         return _err("Ошибка соединения с API Calltouch.", _describe_exc(exc))
     if resp.status_code in (401, 403):
-        return _err("Токен недействителен или нет прав (проверьте clientApiId).")
+        return _err("Нет доступа: проверьте clientApiId и права на API.")
     ctype = resp.headers.get("content-type", "")
     if resp.status_code == 200 and "json" in ctype:
-        return _ok("Токен Calltouch принят.")
+        return _ok("Доступ Calltouch подтверждён.", f"Проект {site}")
     if resp.status_code == 200:
-        # Редирект привёл на HTML-страницу (обычно неверный токен или иной тип доступа).
+        # Редирект привёл на HTML — обычно неверный siteId (или тип доступа).
         return _err(
-            "Неверный токен или требуется другой доступ Calltouch.",
-            "API вернул не-JSON ответ — проверьте clientApiId (профессиональная версия).",
+            "Не удалось подтвердить доступ Calltouch.",
+            "API вернул не-JSON — проверьте siteId (ID проекта) и clientApiId.",
         )
     return _err(f"API Calltouch вернул HTTP {resp.status_code}.")
 
