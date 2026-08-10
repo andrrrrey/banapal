@@ -7,7 +7,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, ai, analytics, auth, dashboard, health, monitor, romi, webhooks
+from app.api import (
+    admin,
+    ai,
+    analytics,
+    auth,
+    dashboard,
+    health,
+    integrations,
+    monitor,
+    romi,
+    webhooks,
+)
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.logging import get_logger
@@ -30,9 +41,23 @@ async def _autoseed_if_needed() -> None:
         logger.warning("Авто-сид пропущен: %s", exc)
 
 
+async def _apply_integration_overrides() -> None:
+    """Накатывает сохранённые через UI доступы поверх переменных окружения."""
+    from app.services.integrations_config import apply_overrides_from_db
+
+    try:
+        async with SessionLocal() as session:
+            count = await apply_overrides_from_db(session)
+            if count:
+                logger.info("Применены UI-настройки интеграций: полей=%d", count)
+    except Exception as exc:  # noqa: BLE001 — старт не должен падать из-за настроек
+        logger.warning("UI-настройки интеграций не применены: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Запуск API :: env=%s data_source=%s", settings.app_env, settings.data_source)
+    await _apply_integration_overrides()
     await _autoseed_if_needed()
     yield
     logger.info("Остановка API")
@@ -67,4 +92,5 @@ app.include_router(analytics.router, prefix=api_prefix)
 app.include_router(romi.router, prefix=api_prefix)
 app.include_router(ai.router, prefix=api_prefix)
 app.include_router(admin.router, prefix=api_prefix)
+app.include_router(integrations.router, prefix=api_prefix)
 app.include_router(webhooks.router, prefix=api_prefix)

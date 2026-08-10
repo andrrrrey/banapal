@@ -17,7 +17,7 @@ from app.models.marketing import (
     Product,
     Visit,
 )
-from app.models.settings import RegulationConfig, SettingsHistory
+from app.models.settings import IntegrationSettings, RegulationConfig, SettingsHistory
 
 __all__ = [
     "AdCost",
@@ -28,6 +28,7 @@ __all__ = [
     "Campaign",
     "Channel",
     "Deal",
+    "IntegrationSettings",
     "KpiCard",
     "ManagerControl",
     "MinusWord",

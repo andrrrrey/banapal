@@ -6,6 +6,7 @@ import {
   AiIcon,
   AnalyticsIcon,
   DashboardIcon,
+  IntegrationsIcon,
   MonitorIcon,
   RomiIcon,
 } from "./icons";
@@ -69,6 +70,14 @@ export const NAV_ITEMS: NavItem[] = [
     subtitle: "Настройка параметров контроля без разработчика",
     section: "Настройка",
     Icon: AdminIcon,
+  },
+  {
+    key: "integrations",
+    path: "/integrations",
+    label: "Интеграции",
+    subtitle: "Подключения источников и проверка статуса",
+    section: "Настройка",
+    Icon: IntegrationsIcon,
   },
 ];
 

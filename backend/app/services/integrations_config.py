@@ -1,0 +1,299 @@
+"""Конфигурация доступов к интеграциям через UI.
+
+Единый реестр полей (PROVIDERS) описывает, какие креды нужны каждому источнику.
+Значения хранятся в БД (модель IntegrationSettings, одна строка) и накатываются
+поверх переменных окружения на объект app.core.config.settings — так интеграции
+настраиваются без правки .env и без перезапуска контейнера.
+
+Секреты наружу отдаются замаскированными (`•••• + хвост`); при сохранении пустое
+значение секрета трактуется как «оставить как есть» (чтобы не затирать токен
+случайно), поэтому очистка секрета выполняется отдельным флагом clear.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.logging import get_logger
+from app.models import IntegrationSettings
+
+logger = get_logger("banapal.integrations")
+
+
+@dataclass(frozen=True)
+class Field:
+    key: str            # имя атрибута в Settings (= ключ в data)
+    label: str          # подпись в интерфейсе
+    hint: str = ""      # подсказка «где взять»
+    secret: bool = True  # маскировать ли значение наружу
+    placeholder: str = ""
+
+
+@dataclass(frozen=True)
+class Provider:
+    key: str
+    name: str
+    subtitle: str
+    docs: str
+    fields: list[Field] = field(default_factory=list)
+
+
+PROVIDERS: list[Provider] = [
+    Provider(
+        key="bitrix24",
+        name="Битрикс24",
+        subtitle="CRM: сделки, история этапов, задачи",
+        docs="Портал → «Разработчикам» → «Другое» → «Входящий вебхук»",
+        fields=[
+            Field(
+                "bitrix24_webhook_url",
+                "URL входящего вебхука",
+                "Права на чтение CRM и запись задач. Пример: "
+                "https://<portal>.bitrix24.ru/rest/1/<код>/",
+                secret=True,
+                placeholder="https://<portal>.bitrix24.ru/rest/1/<код>/",
+            ),
+            Field(
+                "bitrix24_inbound_token",
+                "Токен исходящих вебхуков",
+                "Для проверки входящих событий Битрикс24 (необязательно).",
+                secret=True,
+            ),
+        ],
+    ),
+    Provider(
+        key="yandex_direct",
+        name="Яндекс Директ",
+        subtitle="Расход, клики, показы, поисковые запросы",
+        docs="oauth.yandex.ru + одобренная заявка на доступ к API Директа",
+        fields=[
+            Field(
+                "yandex_oauth_token",
+                "OAuth-токен Яндекса",
+                "Общий для Директа и Метрики. Требуется одобренная заявка на API.",
+                secret=True,
+            ),
+            Field(
+                "yandex_direct_login",
+                "Логин клиента Директа",
+                "Только для агентских аккаунтов, иначе оставьте пустым.",
+                secret=False,
+            ),
+        ],
+    ),
+    Provider(
+        key="yandex_metrika",
+        name="Яндекс Метрика",
+        subtitle="Визиты, источники, UTM, цели",
+        docs="Тот же OAuth-токен Яндекса + права «Просмотр» на счётчик",
+        fields=[
+            Field(
+                "yandex_metrika_counter_id",
+                "Номер счётчика",
+                "ID счётчика Метрики (например, 12345678). Токен — общий с Директом.",
+                secret=False,
+                placeholder="12345678",
+            ),
+        ],
+    ),
+    Provider(
+        key="calltouch",
+        name="Calltouch",
+        subtitle="Звонки и атрибуция источников",
+        docs="ЛК Calltouch → Интеграции → API (профессиональная версия)",
+        fields=[
+            Field(
+                "calltouch_client_api_id",
+                "API-токен (clientApiId)",
+                "Токен профессиональной версии Calltouch.",
+                secret=True,
+            ),
+        ],
+    ),
+    Provider(
+        key="moysklad",
+        name="МойСклад",
+        subtitle="Номенклатура, себестоимость, прибыль",
+        docs="Профиль сотрудника → «Токен доступа» (право видеть себестоимость)",
+        fields=[
+            Field(
+                "moysklad_token",
+                "Токен сотрудника",
+                "С правом «Видеть себестоимость, цену закупки и прибыль товаров».",
+                secret=True,
+            ),
+        ],
+    ),
+    Provider(
+        key="llm",
+        name="AI-слой (LLM)",
+        subtitle="Облачная модель для интерпретации",
+        docs="OpenAI-совместимый эндпоинт: base URL, ключ, идентификатор модели",
+        fields=[
+            Field("llm_api_key", "API-ключ", "Ключ доступа к LLM API.", secret=True),
+            Field(
+                "llm_base_url",
+                "Base URL",
+                "Например, https://api.openai.com/v1 или иной совместимый эндпоинт.",
+                secret=False,
+                placeholder="https://api.openai.com/v1",
+            ),
+            Field(
+                "llm_model",
+                "Идентификатор модели",
+                "Например, gpt-4o-mini.",
+                secret=False,
+                placeholder="gpt-4o-mini",
+            ),
+        ],
+    ),
+]
+
+# Плоский индекс key → Field (для валидации/маскирования).
+_FIELD_INDEX: dict[str, Field] = {f.key: f for p in PROVIDERS for f in p.fields}
+FIELD_KEYS: frozenset[str] = frozenset(_FIELD_INDEX)
+
+
+def mask_value(value: str, *, secret: bool) -> str:
+    """Замаскированное представление для UI (секрет → `•••• + хвост`)."""
+    if not value:
+        return ""
+    if not secret:
+        return value
+    tail = value[-4:] if len(value) >= 8 else ""
+    return f"••••{tail}" if tail else "••••••••"
+
+
+async def _load_row(session: AsyncSession) -> IntegrationSettings | None:
+    return await session.get(IntegrationSettings, 1)
+
+
+async def load_overrides(session: AsyncSession) -> dict[str, str]:
+    """Значения из БД (без маскирования). Пусто, если строки ещё нет."""
+    row = await _load_row(session)
+    if not row or not isinstance(row.data, dict):
+        return {}
+    return {k: v for k, v in row.data.items() if k in FIELD_KEYS}
+
+
+def _current_value(overrides: dict[str, str], key: str) -> str:
+    """Эффективное значение: оверрайд из БД, иначе — текущее из settings/env."""
+    if key in overrides:
+        return overrides[key] or ""
+    return str(getattr(settings, key, "") or "")
+
+
+async def get_config(session: AsyncSession) -> dict:
+    """Структура для UI: провайдеры, поля (маскированные), признаки заполнения."""
+    overrides = await load_overrides(session)
+
+    providers_out: list[dict] = []
+    for p in PROVIDERS:
+        fields_out: list[dict] = []
+        filled_count = 0
+        required = [f for f in p.fields if f.key != "yandex_direct_login"
+                    and f.key != "bitrix24_inbound_token"]
+        for f in p.fields:
+            raw = _current_value(overrides, f.key)
+            is_filled = bool(raw)
+            if is_filled and f in required:
+                filled_count += 1
+            fields_out.append({
+                "key": f.key,
+                "label": f.label,
+                "hint": f.hint,
+                "secret": f.secret,
+                "placeholder": f.placeholder,
+                "filled": is_filled,
+                # Секрет наружу не отдаём — только маску; несекрет отдаём как есть.
+                "value": mask_value(raw, secret=f.secret),
+            })
+        configured = filled_count >= len(required) if required else False
+        providers_out.append({
+            "key": p.key,
+            "name": p.name,
+            "subtitle": p.subtitle,
+            "docs": p.docs,
+            "configured": configured,
+            "fields": fields_out,
+        })
+
+    return {
+        "data_source": settings.data_source,
+        "providers": providers_out,
+    }
+
+
+def _apply_to_settings(values: dict[str, str]) -> None:
+    """Накатывает значения на живой объект настроек (без валидации присваивания)."""
+    for key, value in values.items():
+        if key in FIELD_KEYS:
+            setattr(settings, key, value or "")
+
+
+async def apply_overrides_from_db(session: AsyncSession) -> int:
+    """Стартовый накат: значения из БД поверх env. Возвращает число полей."""
+    overrides = await load_overrides(session)
+    if overrides:
+        _apply_to_settings(overrides)
+    return len(overrides)
+
+
+async def save_config(
+    session: AsyncSession,
+    *,
+    values: dict[str, str] | None = None,
+    clear: list[str] | None = None,
+    data_source: str | None = None,
+) -> dict:
+    """Сохраняет доступы в БД и накатывает на живой settings.
+
+    - values: {ключ: значение}. Пустая строка для секрета игнорируется (чтобы не
+      затирать токен) — для очистки секрета передавайте его ключ в `clear`.
+      Несекретные поля можно очищать пустой строкой.
+    - clear: список ключей, которые нужно очистить принудительно.
+    - data_source: mock | real (переключение источника данных).
+    """
+    row = await _load_row(session)
+    data: dict[str, str] = dict(row.data) if row and isinstance(row.data, dict) else {}
+
+    applied: dict[str, str] = {}
+
+    for key, value in (values or {}).items():
+        if key not in FIELD_KEYS:
+            continue
+        f = _FIELD_INDEX[key]
+        text = (value or "").strip()
+        if f.secret and not text:
+            # Пустой секрет — «оставить как есть».
+            continue
+        data[key] = text
+        applied[key] = text
+
+    for key in clear or []:
+        if key in FIELD_KEYS:
+            data[key] = ""
+            applied[key] = ""
+
+    if row is None:
+        row = IntegrationSettings(id=1, data=data)
+        session.add(row)
+    else:
+        row.data = data
+
+    if data_source in ("mock", "real"):
+        settings.data_source = data_source  # type: ignore[assignment]
+
+    await session.commit()
+
+    # Немедленно активируем сохранённые креды в текущем процессе.
+    _apply_to_settings(applied)
+
+    logger.info(
+        "Настройки интеграций сохранены: полей=%d, data_source=%s",
+        len(applied), settings.data_source,
+    )
+    return await get_config(session)
