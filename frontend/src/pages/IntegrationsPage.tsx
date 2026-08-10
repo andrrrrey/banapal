@@ -1,5 +1,6 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, Segmented, Spin } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   type CheckResult,
@@ -8,13 +9,47 @@ import {
   type IntegrationField,
   type IntegrationProvider,
   type IntegrationsConfig,
+  type RecomputeStatus,
   useCheckAll,
   useCheckIntegration,
   useGenerateAi,
   useIntegrations,
-  useRecompute,
+  useRecomputeStatus,
   useSaveIntegrations,
+  useStartRecompute,
 } from "@/api/integrations";
+
+const PROVIDER_NAMES: Record<string, string> = {
+  bitrix24: "Битрикс24",
+  yandex_direct: "Яндекс Директ",
+  yandex_metrika: "Яндекс Метрика",
+  calltouch: "Calltouch",
+  moysklad: "МойСклад",
+  demo: "Демо-данные",
+};
+
+function SourcesSummary({ sources }: { sources: RecomputeStatus["sources"] }) {
+  const entries = Object.entries(sources ?? {});
+  if (entries.length === 0) return null;
+  return (
+    <div className="intg-src-summary">
+      {entries.map(([key, s]) => {
+        const cls = s.status === "ok" ? "ok" : s.status === "error" ? "err" : "idle";
+        const label =
+          s.status === "ok"
+            ? `${PROVIDER_NAMES[key] ?? key}: ${s.count ?? "готово"}`
+            : s.status === "skipped"
+              ? `${PROVIDER_NAMES[key] ?? key}: не настроен`
+              : `${PROVIDER_NAMES[key] ?? key}: ошибка`;
+        return (
+          <span key={key} className={`intg-src-chip ${cls}`} title={s.message ?? ""}>
+            {label}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 /* --- Значок статуса подключения --- */
 function statusMeta(
@@ -86,8 +121,10 @@ export default function IntegrationsPage() {
   const checkAll = useCheckAll();
   const { message } = App.useApp();
 
-  const recompute = useRecompute();
+  const startRecompute = useStartRecompute();
+  const recomputeStatus = useRecomputeStatus();
   const generateAi = useGenerateAi();
+  const qc = useQueryClient();
 
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [dataSource, setDataSource] = useState<DataSource>("mock");
@@ -98,8 +135,31 @@ export default function IntegrationsPage() {
     if (q.data) {
       setDraft(initialDraft(q.data));
       setDataSource(q.data.data_source);
+      // Восстанавливаем сохранённые результаты проверок (переживают перезагрузку).
+      const saved: Record<string, CheckResult> = {};
+      for (const p of q.data.providers) {
+        if (p.last_check) saved[p.key] = p.last_check;
+      }
+      setChecks((prev) => ({ ...saved, ...prev }));
     }
   }, [q.data]);
+
+  // Когда фоновый пересчёт завершился — обновляем витрины дашборда и сообщаем.
+  const prevState = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const st = recomputeStatus.data?.state;
+    if (prevState.current === "running" && st && st !== "running") {
+      if (st === "done") {
+        for (const key of ["dashboard", "monitor", "analytics", "romi", "ai"]) {
+          qc.invalidateQueries({ queryKey: [key] });
+        }
+        message.success("Пересчёт завершён, дашборд обновлён");
+      } else if (st === "error") {
+        message.error(`Пересчёт: ${recomputeStatus.data?.error ?? "ошибка"}`);
+      }
+    }
+    prevState.current = st;
+  }, [recomputeStatus.data?.state, recomputeStatus.data?.error, qc, message]);
 
   const cfg = q.data;
 
@@ -176,12 +236,8 @@ export default function IntegrationsPage() {
 
   const onRecompute = async () => {
     try {
-      const res = await recompute.mutateAsync();
-      message.success(
-        res.mode === "real"
-          ? "Пересчёт по боевым источникам выполнен, дашборд обновлён"
-          : "Демо-данные пересобраны, дашборд обновлён",
-      );
+      await startRecompute.mutateAsync();
+      await recomputeStatus.refetch();
     } catch (e) {
       message.error((e as Error).message);
     }
@@ -238,11 +294,32 @@ export default function IntegrationsPage() {
                 <b>Пересчитать данные и обновить дашборд</b>
                 <span>
                   {cfg.data_source === "real"
-                    ? "Выгружает источники и пересобирает витрины по боевым интеграциям."
+                    ? "Выгружает настроенные источники и пересобирает витрины по боевым интеграциям."
                     : "Пересобирает демонстрационные данные для согласованного отображения."}
                 </span>
+                {recomputeStatus.data && recomputeStatus.data.state !== "idle" ? (
+                  <div className={`intg-progress ${recomputeStatus.data.state}`}>
+                    <div className="intg-progress-head">
+                      {recomputeStatus.data.state === "running" ? <Spin size="small" /> : null}
+                      <span>
+                        {recomputeStatus.data.state === "running"
+                          ? recomputeStatus.data.step || "Идёт пересчёт…"
+                          : recomputeStatus.data.state === "done"
+                            ? "Пересчёт завершён"
+                            : `Ошибка: ${recomputeStatus.data.error ?? "неизвестно"}`}
+                      </span>
+                    </div>
+                    {recomputeStatus.data.state !== "running" ? (
+                      <SourcesSummary sources={recomputeStatus.data.sources} />
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
-              <Button onClick={onRecompute} loading={recompute.isPending}>
+              <Button
+                onClick={onRecompute}
+                loading={startRecompute.isPending || recomputeStatus.data?.state === "running"}
+                disabled={recomputeStatus.data?.state === "running"}
+              >
                 Пересчитать
               </Button>
             </div>

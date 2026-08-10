@@ -22,6 +22,7 @@ export interface IntegrationProvider {
   subtitle: string;
   docs: string;
   configured: boolean;
+  last_check?: CheckResult | null;
   fields: IntegrationField[];
 }
 
@@ -31,9 +32,22 @@ export interface IntegrationsConfig {
   providers: IntegrationProvider[];
 }
 
-export interface RecomputeResult {
-  ok: boolean;
-  mode: DataSource;
+export type RecomputeState = "idle" | "running" | "done" | "error";
+
+export interface RecomputeSource {
+  status: string; // ok | error | skipped
+  count?: number;
+  message?: string;
+}
+
+export interface RecomputeStatus {
+  state: RecomputeState;
+  step: string;
+  started_at: string | null;
+  finished_at: string | null;
+  mode: DataSource | null;
+  error: string | null;
+  sources: Record<string, RecomputeSource>;
   stats: Record<string, unknown>;
 }
 
@@ -98,16 +112,19 @@ export function useCheckAll() {
   });
 }
 
-// Ручной пересчёт данных/витрин — после успеха обновляем все витрины дашборда.
-export function useRecompute() {
-  const qc = useQueryClient();
+// Запуск фонового пересчёта (возвращает начальный статус running).
+export function useStartRecompute() {
   return useMutation({
-    mutationFn: () => api.post<RecomputeResult>("/integrations/recompute"),
-    onSuccess: () => {
-      for (const key of ["dashboard", "monitor", "analytics", "romi", "ai"]) {
-        qc.invalidateQueries({ queryKey: [key] });
-      }
-    },
+    mutationFn: () => api.post<RecomputeStatus>("/integrations/recompute"),
+  });
+}
+
+// Опрос статуса пересчёта; сам опрашивает, пока идёт работа.
+export function useRecomputeStatus() {
+  return useQuery<RecomputeStatus>({
+    queryKey: ["integrations", "recompute", "status"],
+    queryFn: () => api.get("/integrations/recompute/status"),
+    refetchInterval: (q) => (q.state.data?.state === "running" ? 1500 : false),
   });
 }
 

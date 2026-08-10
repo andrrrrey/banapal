@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,10 +22,58 @@ from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.logging import get_logger
 from app.integrations import factory
-from app.models import AdCost, Baseline, Campaign, Channel, Product
+from app.models import AdCost, Baseline, Campaign, Channel, Deal, Product
 from app.services import romi
 
 logger = get_logger("banapal.ingest")
+
+# Тип колбэка прогресса: получает короткий текст шага.
+Progress = Callable[[str], Awaitable[None]]
+
+# Глубина выгрузки сделок Битрикс24 (совпадает с окном дашборда).
+_DEALS_WINDOW_DAYS = 30
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    """Безопасный разбор ISO-даты Битрикс24 (с таймзоной) в datetime."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
+
+
+def _stage_class(stage: str | None) -> str:
+    """CSS-класс статуса лида по этапу (нейтральный, без выдумок)."""
+    s = (stage or "").lower()
+    if any(k in s for k in ("оплач", "успешно", "won")):
+        return "st-ok"
+    if any(k in s for k in ("отказ", "спам", "lose", "fail")):
+        return "st-bad"
+    return "st-mid"
+
+
+def _deal_from_bitrix(position: int, nd: dict) -> Deal:
+    """Нормализованная сделка Битрикс24 → строка Deal (минимальный безопасный маппинг)."""
+    stage = nd.get("stage")
+    return Deal(
+        position=position,
+        on_dashboard=True,
+        ref=nd.get("ref", ""),
+        name=nd.get("name") or "Без названия",
+        src=str(nd.get("src") or "—"),
+        campaign=nd.get("campaign"),
+        utm=nd.get("utm"),
+        mgr=str(nd.get("mgr") or "—"),
+        status_label=str(stage or "—"),
+        status_class=_stage_class(stage),
+        stage=stage,
+        amount=int(nd.get("amount") or 0),
+        first_contact="—",
+        created_at=_parse_dt(nd.get("created")),
+        last_activity_at=_parse_dt(nd.get("last_activity")),
+    )
 
 # Правила отнесения кампании к каналу (по префиксу названия кампании).
 CHANNEL_RULES: list[tuple[str, str, str]] = [
@@ -86,32 +136,87 @@ def baseline_from(channels: list[dict], deals: list[dict]) -> dict[str, float]:
 
 # --------------------------- Оркестрация (боевой режим) ---------------------------
 
-async def ingest_all(session: AsyncSession) -> dict:
-    """Полный цикл: выгрузка источников → БД → пересчёт витрин."""
+async def _fetch_source(
+    sources: dict, key: str, label: str, fn: Callable[[], list[dict]],
+    progress: Progress | None, step_text: str,
+) -> list[dict]:
+    """Выгружает один источник устойчиво: ошибка/отсутствие креда не валит пересчёт."""
+    if progress:
+        await progress(step_text)
+    try:
+        rows = fn()
+        sources[key] = {"status": "ok", "count": len(rows)}
+        return rows
+    except Exception as exc:  # noqa: BLE001 — источник недоступен → отмечаем и продолжаем
+        logger.warning("Источник %s недоступен: %s", key, exc)
+        sources[key] = {"status": "error", "message": str(exc)}
+        return []
+
+
+async def ingest_all(session: AsyncSession, progress: Progress | None = None) -> dict:
+    """Устойчивый цикл: выгрузка настроенных источников → БД → пересчёт витрин.
+
+    Ненастроенные источники пропускаются (status=skipped), сбойные — помечаются
+    ошибкой, но не прерывают пересчёт. Возвращает режим, per-source статус и stats.
+    """
     if settings.data_source != "real":
         logger.info("ingest: DATA_SOURCE != real — пропуск (в mock используется сид)")
-        return {"skipped": True}
+        return {"mode": settings.data_source, "skipped": True, "sources": {}, "stats": {}}
 
-    stats: dict[str, int] = {}
+    sources: dict[str, dict] = {}
 
-    # 1. Сырьё из источников
-    deals = factory.get_bitrix24().fetch_deals()
-    stats["deals"] = len(deals)
-    direct_costs = factory.get_yandex_direct().fetch_channels()
-    stats["direct_campaigns"] = len(direct_costs)
-    products = factory.get_moysklad().fetch_products()
-    stats["products"] = len(products)
+    # 1. Сделки Битрикс24 (за окно дашборда — иначе выгружается вся история портала).
+    if settings.bitrix24_webhook_url:
+        since = (datetime.now(UTC) - timedelta(days=_DEALS_WINDOW_DAYS)).strftime(
+            "%Y-%m-%dT00:00:00+03:00"
+        )
+        deals = await _fetch_source(
+            sources, "bitrix24", "Битрикс24",
+            lambda: factory.get_bitrix24().fetch_deals(created_after=since),
+            progress, f"Битрикс24: загрузка сделок за {_DEALS_WINDOW_DAYS} дней…",
+        )
+    else:
+        deals = []
+        sources["bitrix24"] = {"status": "skipped"}
 
-    # 2. Пересчёт витрин
+    # 2. Расход Яндекс Директа (для витрины каналов).
+    if settings.yandex_oauth_token:
+        direct_costs = await _fetch_source(
+            sources, "yandex_direct", "Яндекс Директ",
+            lambda: factory.get_yandex_direct().fetch_channels(),
+            progress, "Яндекс Директ: статистика кампаний…",
+        )
+    else:
+        direct_costs = []
+        sources["yandex_direct"] = {"status": "skipped"}
+
+    # 3. Номенклатура МойСклад (себестоимость/бренды).
+    if settings.moysklad_token:
+        products = await _fetch_source(
+            sources, "moysklad", "МойСклад",
+            lambda: factory.get_moysklad().fetch_products(),
+            progress, "МойСклад: номенклатура…",
+        )
+    else:
+        products = []
+        sources["moysklad"] = {"status": "skipped"}
+
+    # 4. Пересчёт витрин
+    if progress:
+        await progress("Пересчёт витрин и показателей…")
     channels = aggregate_channels(direct_costs)
     baseline = baseline_from(channels, deals)
 
-    # 3. Запись
+    # 5. Запись (сделки + каналы + продукты + базлайны)
+    await session.execute(delete(Deal))  # каскадно чистит задачи/историю этапов
     await session.execute(delete(Campaign))
     await session.execute(delete(Channel))
     await session.execute(delete(AdCost))
     await session.execute(delete(Product))
     await session.execute(delete(Baseline))
+
+    for i, nd in enumerate(deals):
+        session.add(_deal_from_bitrix(i, nd))
 
     for i, ch in enumerate(channels):
         channel = Channel(
@@ -135,8 +240,9 @@ async def ingest_all(session: AsyncSession) -> dict:
         session.add(Baseline(key=key, value=value))
 
     await session.commit()
+    stats = {"deals": len(deals), "channels": len(channels), "products": len(products)}
     logger.info("ingest завершён: %s", stats)
-    return stats
+    return {"mode": "real", "sources": sources, "stats": stats}
 
 
 async def main() -> None:
