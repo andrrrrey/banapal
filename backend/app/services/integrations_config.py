@@ -164,13 +164,71 @@ PROVIDERS: list[Provider] = [
 _FIELD_INDEX: dict[str, Field] = {f.key: f for p in PROVIDERS for f in p.fields}
 FIELD_KEYS: frozenset[str] = frozenset(_FIELD_INDEX)
 
-# Служебный ключ в JSON-данных строки для хранения выбранного источника данных
-# (mock | real). Не входит в FIELD_KEYS, поэтому не трактуется как креды.
+# Служебные ключи в JSON-данных строки (не входят в FIELD_KEYS, не трактуются как
+# креды): источник данных, сохранённые результаты проверок, статус пересчёта.
 _DS_KEY = "__data_source__"
+_CHECKS_KEY = "__checks__"
+_RECOMPUTE_KEY = "__recompute__"
 
 
 async def _load_row(session: AsyncSession) -> IntegrationSettings | None:
     return await session.get(IntegrationSettings, 1)
+
+
+async def _load_or_create_row(session: AsyncSession) -> IntegrationSettings:
+    row = await _load_row(session)
+    if row is None:
+        row = IntegrationSettings(id=1, data={})
+        session.add(row)
+    return row
+
+
+async def save_check_result(session: AsyncSession, provider: str, result: dict) -> None:
+    """Сохраняет последний результат проверки провайдера (переживает перезагрузку)."""
+    row = await _load_or_create_row(session)
+    data = dict(row.data) if isinstance(row.data, dict) else {}
+    checks = dict(data.get(_CHECKS_KEY) or {})
+    checks[provider] = {
+        "provider": provider,
+        "status": result.get("status"),
+        "message": result.get("message", ""),
+        "detail": result.get("detail", ""),
+        "checked_at": result.get("checked_at", ""),
+    }
+    data[_CHECKS_KEY] = checks
+    row.data = data
+    await session.commit()
+
+
+def _default_recompute_status() -> dict:
+    return {
+        "state": "idle", "step": "", "started_at": None, "finished_at": None,
+        "mode": None, "error": None, "sources": {}, "stats": {},
+    }
+
+
+async def get_recompute_status(session: AsyncSession) -> dict:
+    row = await _load_row(session)
+    if row and isinstance(row.data, dict):
+        stored = row.data.get(_RECOMPUTE_KEY)
+        if isinstance(stored, dict):
+            return {**_default_recompute_status(), **stored}
+    return _default_recompute_status()
+
+
+async def set_recompute_status(session: AsyncSession, status: dict) -> None:
+    row = await _load_or_create_row(session)
+    data = dict(row.data) if isinstance(row.data, dict) else {}
+    data[_RECOMPUTE_KEY] = status
+    row.data = data
+    await session.commit()
+
+
+async def merge_recompute_status(session: AsyncSession, patch: dict) -> dict:
+    current = await get_recompute_status(session)
+    current.update(patch)
+    await set_recompute_status(session, current)
+    return current
 
 
 async def load_overrides(session: AsyncSession) -> dict[str, str]:
@@ -211,6 +269,9 @@ async def get_config(session: AsyncSession) -> dict:
         _current_value(overrides, "llm_api_key") and _current_value(overrides, "llm_base_url")
     )
 
+    # Сохранённые результаты последних проверок (чтобы статус переживал перезагрузку).
+    stored_checks = raw.get(_CHECKS_KEY) if isinstance(raw.get(_CHECKS_KEY), dict) else {}
+
     providers_out: list[dict] = []
     for p in PROVIDERS:
         fields_out: list[dict] = []
@@ -241,6 +302,7 @@ async def get_config(session: AsyncSession) -> dict:
             "subtitle": p.subtitle,
             "docs": p.docs,
             "configured": configured,
+            "last_check": stored_checks.get(p.key),
             "fields": fields_out,
         })
 

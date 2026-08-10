@@ -6,7 +6,7 @@ from app.seeds.leads import ALL_DEALS
 
 
 class MockBitrix24Adapter:
-    def fetch_deals(self) -> list[dict]:
+    def fetch_deals(self, created_after: str | None = None) -> list[dict]:  # noqa: ARG002
         return [dict(row) for row in ALL_DEALS]
 
     def fetch_stage_history(self) -> list[dict]:

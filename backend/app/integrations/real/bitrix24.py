@@ -65,14 +65,20 @@ def normalize_deal(raw: dict) -> dict:
 
 
 class RealBitrix24Adapter:
-    def fetch_deals(self) -> list[dict]:
-        raw = _call("crm.deal.list", {
+    def fetch_deals(self, created_after: str | None = None) -> list[dict]:
+        params: dict[str, Any] = {
             "select": [
                 "ID", "TITLE", "STAGE_ID", "ASSIGNED_BY_ID", "SOURCE_ID",
                 "OPPORTUNITY", "DATE_CREATE", "DATE_MODIFY", "LAST_ACTIVITY_TIME",
                 "UTM_SOURCE", "UTM_CAMPAIGN",
             ],
-        })
+        }
+        # Ограничение периода резко сокращает объём выгрузки (иначе постранично
+        # тянется вся история портала). created_after — дата в формате ISO 8601.
+        if created_after:
+            params["filter"] = {">=DATE_CREATE": created_after}
+            params["order"] = {"DATE_CREATE": "DESC"}
+        raw = _call("crm.deal.list", params)
         return [normalize_deal(d) for d in raw]
 
     def fetch_stage_history(self) -> list[dict]:

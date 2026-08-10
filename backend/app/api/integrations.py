@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import threading
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -69,7 +71,10 @@ async def check_all(session: AsyncSession = Depends(get_session)) -> dict[str, A
     # Синхронизируем доступы из БД в этот воркер, чтобы проверка использовала
     # последние сохранённые значения (а не устаревшие из памяти другого воркера).
     await cfg.apply_overrides_from_db(session)
-    return await run_in_threadpool(checker.run_all_checks)
+    results = await run_in_threadpool(checker.run_all_checks)
+    for provider, result in results.items():
+        await cfg.save_check_result(session, provider, result)
+    return results
 
 
 @router.post("/{provider}/check")
@@ -79,19 +84,49 @@ async def check_one(
 ) -> dict[str, Any]:
     """Проверяет подключение одной интеграции."""
     await cfg.apply_overrides_from_db(session)
-    return await run_in_threadpool(checker.run_check, provider)
+    result = await run_in_threadpool(checker.run_check, provider)
+    await cfg.save_check_result(session, provider, result)
+    return result
+
+
+# Пересчёт может идти минуты (выгрузка источников), поэтому запускается фоново,
+# а прогресс/итог опрашиваются через /recompute/status.
+_RECOMPUTE_STALE = timedelta(minutes=15)
 
 
 @router.post("/recompute")
-async def recompute() -> dict[str, Any]:
-    """Пересчитывает данные и витрины дашборда (real → выгрузка; mock → демо)."""
-    try:
-        return await run_in_threadpool(maintenance.run_blocking, maintenance.recompute)
-    except Exception as exc:  # noqa: BLE001 — сетевые/данные ошибки → 502
+async def recompute(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Запускает фоновый пересчёт данных дашборда. Возвращает статус (running)."""
+    current = await cfg.get_recompute_status(session)
+    if current.get("state") == "running" and not _is_stale(current.get("started_at")):
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Пересчёт не выполнен: {exc}",
-        ) from exc
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Пересчёт уже выполняется.",
+        )
+    # Помечаем запуск сразу (чтобы опрос статуса не застал «idle») и стартуем поток.
+    await cfg.set_recompute_status(session, {
+        "state": "running", "step": "Запуск…",
+        "started_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "finished_at": None, "mode": None, "error": None, "sources": {}, "stats": {},
+    })
+    threading.Thread(target=maintenance.run_recompute_blocking, daemon=True).start()
+    return await cfg.get_recompute_status(session)
+
+
+@router.get("/recompute/status")
+async def recompute_status(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Текущий статус пересчёта (для опроса со страницы)."""
+    return await cfg.get_recompute_status(session)
+
+
+def _is_stale(started_at: str | None) -> bool:
+    if not started_at:
+        return True
+    try:
+        started = datetime.fromisoformat(started_at)
+    except (ValueError, TypeError):
+        return True
+    return datetime.now(UTC) - started > _RECOMPUTE_STALE
 
 
 @router.post("/ai/generate")
