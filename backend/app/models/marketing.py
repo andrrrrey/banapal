@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -26,12 +26,13 @@ class Channel(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)
     name: Mapped[str] = mapped_column(String(128), unique=True)
     color: Mapped[str] = mapped_column(String(16))
-    spend: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Денежные поля — BigInteger: реальные расход/выручка/маржа выходят за int32.
+    spend: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     leads: Mapped[int] = mapped_column(Integer, default=0)
     deals: Mapped[int] = mapped_column(Integer, default=0)
     payments: Mapped[int] = mapped_column(Integer, default=0)
-    revenue: Mapped[int] = mapped_column(Integer, default=0)
-    margin: Mapped[int] = mapped_column(Integer, default=0)
+    revenue: Mapped[int] = mapped_column(BigInteger, default=0)
+    margin: Mapped[int] = mapped_column(BigInteger, default=0)
 
     campaigns: Mapped[list[Campaign]] = relationship(
         back_populates="channel", cascade="all, delete-orphan", order_by="Campaign.position"
@@ -47,12 +48,12 @@ class Campaign(Base):
     channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id", ondelete="CASCADE"))
     position: Mapped[int] = mapped_column(Integer, default=0)
     name: Mapped[str] = mapped_column(String(128))
-    spend: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    spend: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     leads: Mapped[int] = mapped_column(Integer, default=0)
     deals: Mapped[int] = mapped_column(Integer, default=0)
     payments: Mapped[int] = mapped_column(Integer, default=0)
-    revenue: Mapped[int] = mapped_column(Integer, default=0)
-    margin: Mapped[int] = mapped_column(Integer, default=0)
+    revenue: Mapped[int] = mapped_column(BigInteger, default=0)
+    margin: Mapped[int] = mapped_column(BigInteger, default=0)
 
     channel: Mapped[Channel] = relationship(back_populates="campaigns")
 
@@ -66,7 +67,7 @@ class Payment(Base):
     deal_id: Mapped[int | None] = mapped_column(
         ForeignKey("deals.id", ondelete="SET NULL"), nullable=True
     )
-    amount: Mapped[int] = mapped_column(Integer, default=0)
+    amount: Mapped[int] = mapped_column(BigInteger, default=0)
     source: Mapped[str] = mapped_column(String(32), default="")
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -82,9 +83,9 @@ class AdCost(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     campaign: Mapped[str] = mapped_column(String(128), default="")
-    spend: Mapped[int] = mapped_column(Integer, default=0)
+    spend: Mapped[int] = mapped_column(BigInteger, default=0)
     clicks: Mapped[int] = mapped_column(Integer, default=0)
-    impressions: Mapped[int] = mapped_column(Integer, default=0)
+    impressions: Mapped[int] = mapped_column(BigInteger, default=0)
 
 
 class Visit(Base):
