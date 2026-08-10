@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, Float, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -98,9 +98,9 @@ class MinusWord(Base):
     phrase: Mapped[str] = mapped_column(String(255))
     camp: Mapped[str] = mapped_column(String(128), default="")
     level: Mapped[str] = mapped_column(String(48), default="")
-    shows: Mapped[int] = mapped_column(Integer, default=0)
+    shows: Mapped[int] = mapped_column(BigInteger, default=0)
     clicks: Mapped[int] = mapped_column(Integer, default=0)
-    spend: Mapped[int] = mapped_column(Integer, default=0)
+    spend: Mapped[int] = mapped_column(BigInteger, default=0)
     conv: Mapped[int] = mapped_column(Integer, default=0)
     deals: Mapped[int] = mapped_column(Integer, default=0)
     reason: Mapped[str] = mapped_column(String(96), default="")

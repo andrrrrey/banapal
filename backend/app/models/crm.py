@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -38,7 +38,8 @@ class Deal(Base):
     call: Mapped[bool] = mapped_column(Boolean, default=False)
     invoice: Mapped[bool] = mapped_column(Boolean, default=False)
     paid: Mapped[bool] = mapped_column(Boolean, default=False)
-    amount: Mapped[int] = mapped_column(Integer, default=0)
+    # Сумма сделки — BigInteger: реальные суммы Битрикс24 выходят за int32.
+    amount: Mapped[int] = mapped_column(BigInteger, default=0)
 
     risk: Mapped[str | None] = mapped_column(String(16), nullable=True)
     tags: Mapped[list] = mapped_column(JSON, default=list)
@@ -120,7 +121,7 @@ class Violation(Base):
     norm: Mapped[str] = mapped_column(String(128), default="")
     sla: Mapped[str] = mapped_column(String(64), default="—")
     over: Mapped[bool] = mapped_column(Boolean, default=False)
-    amount: Mapped[int] = mapped_column(Integer, default=0)
+    amount: Mapped[int] = mapped_column(BigInteger, default=0)
     ai_comment: Mapped[str] = mapped_column(String, default="")
 
 
@@ -141,6 +142,6 @@ class ManagerControl(Base):
     fc: Mapped[str] = mapped_column(String(32), default="")
     invoices: Mapped[int] = mapped_column(Integer, default=0)
     payments: Mapped[int] = mapped_column(Integer, default=0)
-    paysum: Mapped[int] = mapped_column(Integer, default=0)
+    paysum: Mapped[int] = mapped_column(BigInteger, default=0)
     zone_label: Mapped[str] = mapped_column(String(32), default="")
     zone_class: Mapped[str] = mapped_column(String(16), default="")
