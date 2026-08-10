@@ -52,6 +52,17 @@ export const AiIcon = () => (
   </Svg>
 );
 
+export const IntegrationsIcon = () => (
+  <Svg>
+    <path
+      d="M14 7l3-3a3 3 0 0 1 4 4l-3 3M10 17l-3 3a3 3 0 0 1-4-4l3-3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path d="M8.5 15.5l7-7" strokeLinecap="round" />
+  </Svg>
+);
+
 export const AdminIcon = () => (
   <Svg>
     <circle cx="12" cy="12" r="3" />

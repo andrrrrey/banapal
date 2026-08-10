@@ -1,0 +1,250 @@
+"""Проверка доступности интеграций («тест подключения»).
+
+Каждая функция делает лёгкий реальный запрос к API провайдера с коротким
+таймаутом и возвращает унифицированный результат:
+
+    {"status": "ok" | "error" | "not_configured", "message": "...", "detail": "..."}
+
+Проверки синхронные (httpx.Client, как в боевых адаптерах) — вызывать из
+async-эндпоинта через run_in_threadpool. Значения кредов берутся из
+app.core.config.settings (туда UI-настройки уже накатаны).
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import httpx
+
+from app.core.config import settings
+from app.core.logging import get_logger
+
+logger = get_logger("banapal.integrations")
+
+# Короткие таймауты: тест подключения не должен «висеть».
+_TIMEOUT = httpx.Timeout(12.0, connect=6.0)
+
+
+def _ok(message: str, detail: str = "") -> dict:
+    return {"status": "ok", "message": message, "detail": detail}
+
+
+def _err(message: str, detail: str = "") -> dict:
+    return {"status": "error", "message": message, "detail": detail}
+
+
+def _missing(message: str) -> dict:
+    return {"status": "not_configured", "message": message, "detail": ""}
+
+
+def _describe_exc(exc: Exception) -> str:
+    if isinstance(exc, httpx.TimeoutException):
+        return "Превышено время ожидания ответа."
+    if isinstance(exc, httpx.ConnectError):
+        return "Не удалось установить соединение (проверьте адрес и сеть)."
+    if isinstance(exc, httpx.TransportError):
+        return "Сетевая ошибка при обращении к API."
+    return str(exc) or exc.__class__.__name__
+
+
+def check_bitrix24() -> dict:
+    url = (settings.bitrix24_webhook_url or "").rstrip("/")
+    if not url:
+        return _missing("Не указан URL входящего вебхука.")
+    try:
+        resp = httpx.post(f"{url}/profile.json", json={}, timeout=_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 — любой сбой = ошибка проверки
+        return _err("Ошибка соединения с Битрикс24.", _describe_exc(exc))
+    if resp.status_code == 401:
+        return _err("Вебхук недействителен или отозван (401).")
+    try:
+        data = resp.json()
+    except ValueError:
+        return _err(f"Неожиданный ответ портала (HTTP {resp.status_code}).")
+    if isinstance(data, dict) and data.get("error"):
+        detail = str(data.get("error_description") or data.get("error"))
+        return _err("Портал вернул ошибку.", detail)
+    if resp.status_code == 200 and isinstance(data, dict) and "result" in data:
+        res = data.get("result") or {}
+        who = res.get("NAME") or res.get("LAST_NAME") or res.get("ID")
+        return _ok("Вебхук активен.", f"Аккаунт: {who}" if who else "")
+    return _err(f"Портал недоступен (HTTP {resp.status_code}).")
+
+
+def check_yandex_direct() -> dict:
+    token = settings.yandex_oauth_token or ""
+    if not token:
+        return _missing("Не указан OAuth-токен Яндекса.")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept-Language": "ru",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    if settings.yandex_direct_login:
+        headers["Client-Login"] = settings.yandex_direct_login
+    body = {
+        "method": "get",
+        "params": {
+            "SelectionCriteria": {},
+            "FieldNames": ["Id", "Name"],
+            "Page": {"Limit": 1},
+        },
+    }
+    try:
+        resp = httpx.post(
+            "https://api.direct.yandex.com/json/v5/campaigns",
+            headers=headers, json=body, timeout=_TIMEOUT,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err("Ошибка соединения с API Директа.", _describe_exc(exc))
+    try:
+        data = resp.json()
+    except ValueError:
+        return _err(f"Неожиданный ответ API Директа (HTTP {resp.status_code}).")
+    if "error" in data:
+        err = data["error"]
+        code = err.get("error_code")
+        detail = err.get("error_detail") or err.get("error_string") or ""
+        if code in (53, 58):  # невалидный/просроченный токен, нет прав
+            return _err("Токен недействителен или нет доступа к API.", detail)
+        return _err("API Директа вернул ошибку.", f"код {code}: {detail}")
+    if resp.status_code == 200:
+        campaigns = (data.get("result") or {}).get("Campaigns", [])
+        return _ok("Токен принят API Директа.", f"Доступно кампаний: {len(campaigns)}+")
+    return _err(f"API Директа недоступен (HTTP {resp.status_code}).")
+
+
+def check_yandex_metrika() -> dict:
+    token = settings.yandex_oauth_token or ""
+    counter = settings.yandex_metrika_counter_id or ""
+    if not token:
+        return _missing("Не указан OAuth-токен Яндекса.")
+    if not counter:
+        return _missing("Не указан номер счётчика Метрики.")
+    params = {
+        "ids": counter,
+        "metrics": "ym:s:visits",
+        "date1": "7daysAgo",
+        "date2": "today",
+        "limit": 1,
+    }
+    headers = {"Authorization": f"OAuth {token}"}
+    try:
+        resp = httpx.get(
+            "https://api-metrika.yandex.net/stat/v1/data",
+            params=params, headers=headers, timeout=_TIMEOUT,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err("Ошибка соединения с API Метрики.", _describe_exc(exc))
+    if resp.status_code == 200:
+        return _ok("Доступ к счётчику подтверждён.", f"Счётчик {counter}")
+    if resp.status_code in (401, 403):
+        return _err("Нет доступа к счётчику (проверьте токен и права).")
+    detail = ""
+    try:
+        detail = str(resp.json().get("message", ""))
+    except ValueError:
+        pass
+    return _err(f"API Метрики вернул HTTP {resp.status_code}.", detail)
+
+
+def check_calltouch() -> dict:
+    cid = settings.calltouch_client_api_id or ""
+    if not cid:
+        return _missing("Не указан API-токен Calltouch.")
+    date_to = datetime.now(UTC).date()
+    date_from = date_to - timedelta(days=1)
+    params = {
+        "clientApiId": cid,
+        "dateFrom": date_from.strftime("%d/%m/%Y"),
+        "dateTo": date_to.strftime("%d/%m/%Y"),
+        "page": 1,
+        "limit": 1,
+    }
+    try:
+        resp = httpx.get(
+            f"https://api.calltouch.ru/calls-service/RestAPI/{cid}/calls-diary/calls",
+            params=params, timeout=_TIMEOUT,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err("Ошибка соединения с API Calltouch.", _describe_exc(exc))
+    if resp.status_code == 200:
+        return _ok("Токен Calltouch принят.")
+    if resp.status_code in (401, 403):
+        return _err("Токен недействителен или нет прав (проверьте clientApiId).")
+    return _err(f"API Calltouch вернул HTTP {resp.status_code}.")
+
+
+def check_moysklad() -> dict:
+    token = settings.moysklad_token or ""
+    if not token:
+        return _missing("Не указан токен МойСклад.")
+    headers = {"Authorization": f"Bearer {token}", "Accept-Encoding": "gzip"}
+    try:
+        resp = httpx.get(
+            "https://api.moysklad.ru/api/remap/1.2/context/employee",
+            headers=headers, timeout=_TIMEOUT,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err("Ошибка соединения с API МойСклад.", _describe_exc(exc))
+    if resp.status_code == 200:
+        try:
+            emp = resp.json()
+            name = emp.get("name") or emp.get("fullName") or ""
+        except ValueError:
+            name = ""
+        return _ok("Токен МойСклад активен.", f"Сотрудник: {name}" if name else "")
+    if resp.status_code in (401, 403):
+        return _err("Токен недействителен или нет прав.")
+    return _err(f"API МойСклад вернул HTTP {resp.status_code}.")
+
+
+def check_llm() -> dict:
+    base = (settings.llm_base_url or "").rstrip("/")
+    key = settings.llm_api_key or ""
+    if not base or not key:
+        return _missing("Не указан base URL или API-ключ LLM.")
+    headers = {"Authorization": f"Bearer {key}"}
+    try:
+        resp = httpx.get(f"{base}/models", headers=headers, timeout=_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001
+        return _err("Ошибка соединения с LLM API.", _describe_exc(exc))
+    if resp.status_code == 200:
+        model = settings.llm_model or "модель по умолчанию"
+        return _ok("LLM API отвечает.", f"Модель: {model}")
+    if resp.status_code in (401, 403):
+        return _err("API-ключ недействителен.")
+    if resp.status_code == 404:
+        # Эндпоинт /models может отсутствовать — соединение при этом рабочее.
+        return _ok("Соединение установлено (эндпоинт /models не поддерживается).")
+    return _err(f"LLM API вернул HTTP {resp.status_code}.")
+
+
+_CHECKS = {
+    "bitrix24": check_bitrix24,
+    "yandex_direct": check_yandex_direct,
+    "yandex_metrika": check_yandex_metrika,
+    "calltouch": check_calltouch,
+    "moysklad": check_moysklad,
+    "llm": check_llm,
+}
+
+
+def run_check(provider: str) -> dict:
+    """Синхронно выполняет проверку одного провайдера."""
+    fn = _CHECKS.get(provider)
+    if fn is None:
+        return _err(f"Неизвестная интеграция: {provider}")
+    checked_at = datetime.now(UTC).isoformat(timespec="seconds")
+    try:
+        result = fn()
+    except Exception as exc:  # noqa: BLE001 — проверка не должна ронять запрос
+        logger.warning("Проверка %s упала: %s", provider, exc)
+        result = _err("Внутренняя ошибка проверки.", str(exc))
+    result["provider"] = provider
+    result["checked_at"] = checked_at
+    return result
+
+
+def run_all_checks() -> dict[str, dict]:
+    return {name: run_check(name) for name in _CHECKS}

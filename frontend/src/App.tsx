@@ -6,6 +6,7 @@ import AdminPage from "@/pages/AdminPage";
 import AiPage from "@/pages/AiPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
 import DashboardPage from "@/pages/DashboardPage";
+import IntegrationsPage from "@/pages/IntegrationsPage";
 import LoginPage from "@/pages/LoginPage";
 import MonitorPage from "@/pages/MonitorPage";
 import RomiPage from "@/pages/RomiPage";
@@ -22,6 +23,7 @@ export function App() {
           <Route path="/romi" element={<RomiPage />} />
           <Route path="/ai" element={<AiPage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/integrations" element={<IntegrationsPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -23,6 +23,22 @@ class RegulationConfig(Base):
     data: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class IntegrationSettings(Base):
+    """Доступы к внешним интеграциям, заданные через UI (одна строка, id=1).
+
+    Хранит значения кредов (вебхуки, токены, идентификаторы счётчиков и т.п.)
+    в поле data (JSON, ключ = имя поля в app.core.config.Settings). Эти значения
+    накатываются поверх переменных окружения на старте приложения и при
+    сохранении — так интеграции можно настраивать без правки .env.
+    Секреты в API отдаются замаскированными; в БД — как есть.
+    """
+
+    __tablename__ = "integration_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class SettingsHistory(Base):
     """История изменений регламента (HISTORY): кто, когда, что менял."""
 
