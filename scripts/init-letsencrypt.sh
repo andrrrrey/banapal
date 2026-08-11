@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
 # Первичный выпуск TLS-сертификата Let's Encrypt для домена из .env.
-# Предусловия: A-запись DOMAIN указывает на этот VPS; порт 80 открыт;
-# .env заполнен (DOMAIN, LETSENCRYPT_EMAIL). Запуск: ./scripts/init-letsencrypt.sh
+#
+# ИДЕМПОТЕНТНО: если действующий боевой сертификат уже установлен — скрипт
+# ничего не перевыпускает (продление идёт автоматически сервисом certbot).
+# Это защищает от лимита Let's Encrypt (5 сертификатов на домен за 168 часов).
+#
+# Запускать этот скрипт нужно ОДИН раз при первичной настройке. Для применения
+# обновлений кода используйте ./scripts/update.sh — он НЕ трогает сертификат.
+#
+# Принудительный перевыпуск (осознанно, помня о лимите):  ./scripts/init-letsencrypt.sh --force
+#
+# Предусловия: A-запись DOMAIN указывает на этот VPS; порт 80 открыт снаружи;
+# .env заполнен (DOMAIN, LETSENCRYPT_EMAIL).
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -12,11 +22,35 @@ set -a; source .env; set +a
 
 DOMAIN="${DOMAIN:?DOMAIN не задан в .env}"
 EMAIL="${LETSENCRYPT_EMAIL:?LETSENCRYPT_EMAIL не задан в .env}"
+FORCE="${1:-}"
 # По умолчанию — БЫСТРЫЙ путь: готовые образы из реестра (docker-compose.registry.yml).
 # Для сборки на сервере: COMPOSE_FILE=docker-compose.prod.yml ./scripts/init-letsencrypt.sh
 FILE="${COMPOSE_FILE:-docker-compose.registry.yml}"
 COMPOSE="docker compose -f ${FILE}"
 LIVE="/etc/letsencrypt/live/${DOMAIN}"
+RENEW_MARGIN=$((30 * 24 * 3600))  # перевыпуск не нужен, пока > 30 дней до истечения
+
+# Есть ли уже действующий сертификат Let's Encrypt (не самоподписанный, не просроченный)?
+has_valid_cert() {
+  $COMPOSE run --rm -T --entrypoint sh certbot -c "
+    F=${LIVE}/fullchain.pem
+    [ -f \"\$F\" ] || exit 1
+    openssl x509 -in \"\$F\" -noout -issuer 2>/dev/null | grep -qi encrypt || exit 1
+    openssl x509 -in \"\$F\" -noout -checkend ${RENEW_MARGIN} >/dev/null 2>&1 || exit 1
+  " >/dev/null 2>&1
+}
+
+if [ "$FORCE" != "--force" ] && has_valid_cert; then
+  echo "✓ Действующий сертификат Let's Encrypt уже установлен — перевыпуск не требуется."
+  echo "  Продление выполняется автоматически (сервис certbot, каждые 12 ч)."
+  echo "  Для применения обновлений кода: ./scripts/update.sh"
+  $COMPOSE up -d web >/dev/null 2>&1 || true
+  exit 0
+fi
+
+if [ "$FORCE" = "--force" ]; then
+  echo "⚠ Принудительный перевыпуск (--force). Помните про лимит Let's Encrypt: 5/неделю."
+fi
 
 echo "==> 1/5 Подготовка образов (${FILE})"
 # registry-режим: скачать готовые образы; build-режим: собрать. Лишнее — no-op.
@@ -57,6 +91,8 @@ else
     'mkdir -p ${LIVE} && openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
      -keyout ${LIVE}/privkey.pem -out ${LIVE}/fullchain.pem -subj /CN=${DOMAIN}'" certbot
   $COMPOSE restart web
-  echo "Проверьте, что порт 80 открыт снаружи и DNS ${DOMAIN} → этот сервер, затем запустите скрипт снова."
+  echo "Возможные причины: лимит Let's Encrypt (5/неделю на домен), закрытый порт 80"
+  echo "или DNS ${DOMAIN} не указывает на этот сервер. При лимите — дождитесь окончания"
+  echo "недельного окна (время указано в сообщении об ошибке выше) и запустите снова."
   exit 1
 fi

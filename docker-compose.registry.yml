@@ -6,8 +6,11 @@
 #  Использование (подробно — docs/DEPLOYMENT.md):
 #      export COMPOSE_FILE=docker-compose.registry.yml
 #      docker compose pull
-#      ./scripts/init-letsencrypt.sh        # первичный выпуск сертификата
+#      ./scripts/init-letsencrypt.sh        # ОДИН раз: выпуск TLS-сертификата
 #      docker compose up -d
+#
+#  Обновление кода потом — одной командой (сертификат не трогается):
+#      ./scripts/update.sh
 #
 #  IMAGE_PREFIX задаётся в .env (по умолчанию ghcr.io/andrrrrey).
 # ============================================================================
