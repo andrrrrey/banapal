@@ -25,6 +25,10 @@ class MockBitrix24Adapter:
         # В mock стадии уже заданы читаемыми названиями в демо-сделках.
         return []
 
+    def fetch_contact_phones(self, contact_ids: list[str]) -> dict[str, str]:  # noqa: ARG002
+        # В mock телефоны уже заданы в демо-сделках.
+        return {}
+
     def create_task(self, payload: dict) -> dict:
         # В mock-режиме постановка задачи в Битрикс24 не выполняется (нет записи).
         return {"ok": True, "external_id": None, "mock": True}

@@ -57,6 +57,7 @@ def normalize_deal(raw: dict) -> dict:
         # Семантика стадии Битрикс: P — в работе, S — успех, F — провал/отказ.
         "semantic": raw.get("STAGE_SEMANTIC_ID"),
         "mgr": raw.get("ASSIGNED_BY_ID"),  # id; резолв имени — на этапе настройки
+        "contact_id": raw.get("CONTACT_ID"),  # для подтягивания телефона контакта
         "src": raw.get("SOURCE_ID"),
         "utm": raw.get("UTM_SOURCE"),
         "campaign": raw.get("UTM_CAMPAIGN"),
@@ -70,9 +71,9 @@ class RealBitrix24Adapter:
     def fetch_deals(self, created_after: str | None = None) -> list[dict]:
         params: dict[str, Any] = {
             "select": [
-                "ID", "TITLE", "STAGE_ID", "STAGE_SEMANTIC_ID", "ASSIGNED_BY_ID", "SOURCE_ID",
-                "OPPORTUNITY", "DATE_CREATE", "DATE_MODIFY", "LAST_ACTIVITY_TIME",
-                "UTM_SOURCE", "UTM_CAMPAIGN",
+                "ID", "TITLE", "STAGE_ID", "STAGE_SEMANTIC_ID", "ASSIGNED_BY_ID",
+                "CONTACT_ID", "SOURCE_ID", "OPPORTUNITY", "DATE_CREATE", "DATE_MODIFY",
+                "LAST_ACTIVITY_TIME", "UTM_SOURCE", "UTM_CAMPAIGN",
             ],
         }
         # Ограничение периода резко сокращает объём выгрузки (иначе постранично
@@ -108,6 +109,34 @@ class RealBitrix24Adapter:
             if sid:
                 out.append({"id": str(sid), "name": s.get("NAME") or str(sid)})
         return out
+
+    def fetch_contact_phones(self, contact_ids: list[str]) -> dict[str, str]:
+        """Телефоны контактов: {contact_id: phone}. Телефон хранится у контакта,
+        не в сделке, поэтому подтягивается отдельно (иначе поле «Телефон» пустое)."""
+        ids = [str(c) for c in contact_ids if c]
+        if not ids:
+            return {}
+        phones: dict[str, str] = {}
+        with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+            for i in range(0, len(ids), 50):  # выборками, оператор @ID = IN
+                batch = ids[i:i + 50]
+                start = 0
+                while True:
+                    resp = request(
+                        "POST", f"{_base()}/crm.contact.list.json", client=client,
+                        json={"filter": {"@ID": batch}, "select": ["ID", "PHONE"], "start": start},
+                    )
+                    data = resp.json()
+                    for c in data.get("result", []):
+                        phone_list = c.get("PHONE") or []
+                        value = phone_list[0].get("VALUE") if phone_list else None
+                        if value:
+                            phones[str(c.get("ID"))] = value
+                    nxt = data.get("next")
+                    if not nxt:
+                        break
+                    start = nxt
+        return phones
 
     def fetch_tasks(self) -> list[dict]:
         return _call("tasks.task.list", {})

@@ -62,16 +62,19 @@ def _deal_from_bitrix(
     position: int, nd: dict,
     users: dict[str, str] | None = None,
     stages: dict[str, str] | None = None,
+    phones: dict[str, str] | None = None,
 ) -> Deal:
     """Нормализованная сделка Битрикс24 → строка Deal (минимальный безопасный маппинг).
 
-    users: карта ID сотрудника → ФИО; stages: карта STAGE_ID → название стадии.
+    users: ID сотрудника → ФИО; stages: STAGE_ID → название; phones: contact_id → телефон.
     """
     code = nd.get("stage")
     semantic = nd.get("semantic")
     stage = (stages or {}).get(str(code)) or code  # человекочитаемое название стадии
     mgr_id = str(nd.get("mgr") or "").strip()
     mgr = (users or {}).get(mgr_id) or mgr_id or "—"
+    contact_id = str(nd.get("contact_id") or "").strip()
+    phone = (phones or {}).get(contact_id)
     return Deal(
         position=position,
         on_dashboard=True,
@@ -81,6 +84,7 @@ def _deal_from_bitrix(
         campaign=nd.get("campaign"),
         utm=nd.get("utm"),
         mgr=mgr,
+        phone=phone,
         status_label=str(stage or "—"),
         status_class=_stage_class(stage, semantic),
         stage=stage,
@@ -183,6 +187,7 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     # 1. Сделки Битрикс24 (за окно дашборда — иначе выгружается вся история портала).
     users: dict[str, str] = {}
     stages: dict[str, str] = {}
+    phones: dict[str, str] = {}
     if settings.bitrix24_webhook_url:
         since = (datetime.now(UTC) - timedelta(days=_DEALS_WINDOW_DAYS)).strftime(
             "%Y-%m-%dT00:00:00+03:00"
@@ -204,6 +209,15 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
                 stages = {s["id"]: s["name"] for s in factory.get_bitrix24().fetch_stages()}
             except Exception as exc:  # noqa: BLE001 — названия стадий необязательны
                 logger.warning("Битрикс24: справочник стадий недоступен: %s", exc)
+            # Телефоны берём у контактов сделок (в самой сделке телефона нет).
+            try:
+                contact_ids = [str(d.get("contact_id")) for d in deals if d.get("contact_id")]
+                if contact_ids:
+                    if progress:
+                        await progress("Битрикс24: телефоны контактов…")
+                    phones = factory.get_bitrix24().fetch_contact_phones(contact_ids)
+            except Exception as exc:  # noqa: BLE001 — телефоны необязательны
+                logger.warning("Битрикс24: телефоны контактов недоступны: %s", exc)
     else:
         deals = []
         sources["bitrix24"] = {"status": "skipped"}
@@ -249,7 +263,7 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     await data_mode.clear_no_source_tables(session)
 
     for i, nd in enumerate(deals):
-        session.add(_deal_from_bitrix(i, nd, users, stages))
+        session.add(_deal_from_bitrix(i, nd, users, stages, phones))
 
     for i, ch in enumerate(channels):
         channel = Channel(
