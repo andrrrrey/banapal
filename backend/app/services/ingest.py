@@ -54,9 +54,14 @@ def _stage_class(stage: str | None) -> str:
     return "st-mid"
 
 
-def _deal_from_bitrix(position: int, nd: dict) -> Deal:
-    """Нормализованная сделка Битрикс24 → строка Deal (минимальный безопасный маппинг)."""
+def _deal_from_bitrix(position: int, nd: dict, users: dict[str, str] | None = None) -> Deal:
+    """Нормализованная сделка Битрикс24 → строка Deal (минимальный безопасный маппинг).
+
+    users: карта ID сотрудника → ФИО (для отображения имени ответственного).
+    """
     stage = nd.get("stage")
+    mgr_id = str(nd.get("mgr") or "").strip()
+    mgr = (users or {}).get(mgr_id) or mgr_id or "—"
     return Deal(
         position=position,
         on_dashboard=True,
@@ -65,7 +70,7 @@ def _deal_from_bitrix(position: int, nd: dict) -> Deal:
         src=str(nd.get("src") or "—"),
         campaign=nd.get("campaign"),
         utm=nd.get("utm"),
-        mgr=str(nd.get("mgr") or "—"),
+        mgr=mgr,
         status_label=str(stage or "—"),
         status_class=_stage_class(stage),
         stage=stage,
@@ -166,6 +171,7 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     sources: dict[str, dict] = {}
 
     # 1. Сделки Битрикс24 (за окно дашборда — иначе выгружается вся история портала).
+    users: dict[str, str] = {}
     if settings.bitrix24_webhook_url:
         since = (datetime.now(UTC) - timedelta(days=_DEALS_WINDOW_DAYS)).strftime(
             "%Y-%m-%dT00:00:00+03:00"
@@ -175,6 +181,14 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
             lambda: factory.get_bitrix24().fetch_deals(created_after=since),
             progress, f"Битрикс24: загрузка сделок за {_DEALS_WINDOW_DAYS} дней…",
         )
+        # Справочник сотрудников для отображения имён ответственных (не критично).
+        if sources["bitrix24"]["status"] == "ok":
+            if progress:
+                await progress("Битрикс24: справочник сотрудников…")
+            try:
+                users = {u["id"]: u["name"] for u in factory.get_bitrix24().fetch_users()}
+            except Exception as exc:  # noqa: BLE001 — имена необязательны
+                logger.warning("Битрикс24: справочник сотрудников недоступен: %s", exc)
     else:
         deals = []
         sources["bitrix24"] = {"status": "skipped"}
@@ -220,7 +234,7 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     await data_mode.clear_no_source_tables(session)
 
     for i, nd in enumerate(deals):
-        session.add(_deal_from_bitrix(i, nd))
+        session.add(_deal_from_bitrix(i, nd, users))
 
     for i, ch in enumerate(channels):
         channel = Channel(
