@@ -168,10 +168,58 @@ _FIELD_INDEX: dict[str, Field] = {f.key: f for p in PROVIDERS for f in p.fields}
 FIELD_KEYS: frozenset[str] = frozenset(_FIELD_INDEX)
 
 # Служебные ключи в JSON-данных строки (не входят в FIELD_KEYS, не трактуются как
-# креды): источник данных, сохранённые результаты проверок, статус пересчёта.
+# креды): источник данных, сохранённые результаты проверок, статус пересчёта,
+# сопоставление пользовательских полей Битрикс.
 _DS_KEY = "__data_source__"
 _CHECKS_KEY = "__checks__"
 _RECOMPUTE_KEY = "__recompute__"
+_FIELD_MAP_KEY = "__field_map__"
+
+# Семантические поля регламента, которые можно сопоставить с полями воронки
+# Битрикс на странице «Интеграции». enables — что даёт заполнение поля.
+FIELD_MAP_TARGETS: list[dict] = [
+    {"key": "refuse_reason", "label": "Причина отказа",
+     "hint": "Включает контроль «перевод в отказ без причины»."},
+    {"key": "client_type", "label": "Тип клиента",
+     "hint": "Частное лицо / мастер / дизайнер / компания и т.п."},
+    {"key": "subject", "label": "Суть запроса",
+     "hint": "Что именно требуется клиенту."},
+    {"key": "timeline", "label": "Сроки",
+     "hint": "Ориентир по срокам клиента."},
+    {"key": "product", "label": "Товары / категории",
+     "hint": "Интересующие товары или категории."},
+]
+_FIELD_MAP_KEYS = frozenset(t["key"] for t in FIELD_MAP_TARGETS)
+
+
+def _default_field_map() -> dict:
+    return {"fields": {}, "required": []}
+
+
+async def get_field_map(session: AsyncSession) -> dict:
+    """Текущее сопоставление полей: {'fields': {ключ: код Битрикс}, 'required': [ключи]}."""
+    row = await _load_row(session)
+    if row and isinstance(row.data, dict):
+        fm = row.data.get(_FIELD_MAP_KEY)
+        if isinstance(fm, dict):
+            fields = {k: v for k, v in (fm.get("fields") or {}).items()
+                      if k in _FIELD_MAP_KEYS and v}
+            required = [k for k in (fm.get("required") or []) if k in _FIELD_MAP_KEYS]
+            return {"fields": fields, "required": required}
+    return _default_field_map()
+
+
+async def save_field_map(session: AsyncSession, fields: dict, required: list) -> dict:
+    """Сохраняет сопоставление полей Битрикс (только известные семантические ключи)."""
+    clean_fields = {k: str(v).strip() for k, v in (fields or {}).items()
+                    if k in _FIELD_MAP_KEYS and str(v or "").strip()}
+    clean_required = [k for k in (required or []) if k in _FIELD_MAP_KEYS]
+    row = await _load_or_create_row(session)
+    data = dict(row.data) if isinstance(row.data, dict) else {}
+    data[_FIELD_MAP_KEY] = {"fields": clean_fields, "required": clean_required}
+    row.data = data
+    await session.commit()
+    return {"fields": clean_fields, "required": clean_required}
 
 
 async def _load_row(session: AsyncSession) -> IntegrationSettings | None:
@@ -274,6 +322,12 @@ async def get_config(session: AsyncSession) -> dict:
 
     # Сохранённые результаты последних проверок (чтобы статус переживал перезагрузку).
     stored_checks = raw.get(_CHECKS_KEY) if isinstance(raw.get(_CHECKS_KEY), dict) else {}
+    fm = raw.get(_FIELD_MAP_KEY) if isinstance(raw.get(_FIELD_MAP_KEY), dict) else {}
+    field_map = {
+        "fields": {k: v for k, v in (fm.get("fields") or {}).items()
+                   if k in _FIELD_MAP_KEYS and v},
+        "required": [k for k in (fm.get("required") or []) if k in _FIELD_MAP_KEYS],
+    }
 
     providers_out: list[dict] = []
     for p in PROVIDERS:
@@ -313,6 +367,8 @@ async def get_config(session: AsyncSession) -> dict:
         "data_source": data_source,
         "ai_configured": ai_configured,
         "providers": providers_out,
+        "field_map": field_map,
+        "field_targets": FIELD_MAP_TARGETS,
     }
 
 

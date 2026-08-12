@@ -75,6 +75,7 @@ def _deal_from_bitrix(
     mgr = (users or {}).get(mgr_id) or mgr_id or "—"
     contact_id = str(nd.get("contact_id") or "").strip()
     phone = (phones or {}).get(contact_id)
+    custom = nd.get("custom") or {}
     return Deal(
         position=position,
         on_dashboard=True,
@@ -85,6 +86,9 @@ def _deal_from_bitrix(
         utm=nd.get("utm"),
         mgr=mgr,
         phone=phone,
+        client_type=custom.get("client_type") or None,
+        refuse_reason=custom.get("refuse_reason") or "",
+        custom=custom or None,
         status_label=str(stage or "—"),
         status_class=_stage_class(stage, semantic),
         stage=stage,
@@ -184,6 +188,11 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
 
     sources: dict[str, dict] = {}
 
+    # Сопоставление пользовательских полей Битрикс (со страницы «Интеграции»).
+    from app.services.integrations_config import get_field_map
+    field_map = await get_field_map(session)
+    extra_fields = field_map.get("fields") or {}
+
     # 1. Сделки Битрикс24 (за окно дашборда — иначе выгружается вся история портала).
     users: dict[str, str] = {}
     stages: dict[str, str] = {}
@@ -194,7 +203,8 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
         )
         deals = await _fetch_source(
             sources, "bitrix24", "Битрикс24",
-            lambda: factory.get_bitrix24().fetch_deals(created_after=since),
+            lambda: factory.get_bitrix24().fetch_deals(
+                created_after=since, extra_fields=extra_fields),
             progress, f"Битрикс24: загрузка сделок за {_DEALS_WINDOW_DAYS} дней…",
         )
         # Справочники сотрудников и стадий (имена/этапы) — не критично для пересчёта.

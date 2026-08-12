@@ -6,8 +6,13 @@ from app.seeds.leads import ALL_DEALS
 
 
 class MockBitrix24Adapter:
-    def fetch_deals(self, created_after: str | None = None) -> list[dict]:  # noqa: ARG002
+    def fetch_deals(
+        self, created_after: str | None = None, extra_fields: dict | None = None,  # noqa: ARG002
+    ) -> list[dict]:
         return [dict(row) for row in ALL_DEALS]
+
+    def fetch_deal_fields(self) -> list[dict]:
+        return []
 
     def fetch_stage_history(self) -> list[dict]:
         # История этапов моделируется полем stage_entered_at сделки.

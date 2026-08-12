@@ -52,8 +52,15 @@ KIND = {
     "no_recontact": ("Лид без повторного касания", "t-amber"),
     "fields": ("Не заполнены обязательные поля", "t-amber"),
     "dup": ("Возможный дубль", "t-blue"),
+    "no_reason": ("Отказ без причины", "t-red"),
     "refusal": ("Отказ «для чистоты воронки»", "t-violet"),
     "spam": ("Подозрительный перевод в «Спам»", "t-violet"),
+}
+
+# Подписи сопоставляемых пользовательских полей (для сообщений о нарушениях).
+_CUSTOM_LABELS = {
+    "refuse_reason": "Причина отказа", "client_type": "Тип клиента",
+    "subject": "Суть запроса", "timeline": "Сроки", "product": "Товары/категории",
 }
 
 # Этап сделки → правило задачи (task_rules), определяющее обязательность задачи.
@@ -87,6 +94,8 @@ class Config:
     schedule: WorkSchedule
     highlight_spam: bool
     highlight_refusal: bool
+    refuse_reason_mapped: bool
+    required_custom: list[tuple[str, str]]
 
     @classmethod
     def parse(cls, data: dict) -> Config:
@@ -95,6 +104,13 @@ class Config:
         task_rules = {r["n"]: bool(r["on"]) for r in data.get("task_rules", [])}
         req_fields = [name for name, on in data.get("req_fields", []) if on]
         evaluative = data.get("evaluative", {})
+        field_map = data.get("field_map") or {}
+        fm_fields = field_map.get("fields") or {}
+        # Обязательные пользовательские поля: сопоставлены И отмечены как обязательные.
+        required_custom = [
+            (k, _CUSTOM_LABELS.get(k, k))
+            for k in (field_map.get("required") or []) if k in fm_fields
+        ]
         return cls(
             first_contact_min=int(fc),
             stuck_days=int(evaluative.get("stuck_days", 5)),
@@ -104,6 +120,8 @@ class Config:
             schedule=WorkSchedule.from_config(data.get("schedule")),
             highlight_spam=bool(evaluative.get("highlight_spam", True)),
             highlight_refusal=bool(evaluative.get("highlight_refusal", True)),
+            refuse_reason_mapped="refuse_reason" in fm_fields,
+            required_custom=required_custom,
         )
 
 
@@ -176,6 +194,16 @@ def evaluate(deals: list[Deal], config_data: dict, now: datetime) -> dict:
         stage = deal.stage or ""
         terminal = is_terminal_stage(stage)
         low = stage.lower()
+        is_refusal = "отказ" in low or "lose" in low or "fail" in low
+
+        # --- Отказ без причины (регулярное нарушение; до пропуска терминальных) ---
+        if is_refusal and cfg.refuse_reason_mapped and not (deal.custom or {}).get("refuse_reason"):
+            regular.append(_mk(
+                deal, "no_reason", over=True, sla="—", norm="причина отказа не указана",
+                amount=0,
+                ai="Сделка переведена в «Отказ» без причины — нарушение регламента "
+                   "(перевод в отказ обязателен только с причиной).",
+            ))
 
         # --- Оценочные (эвристика, решение за руководителем) ---
         if ("отказ" in low or stage == "Отказ") and cfg.highlight_refusal and not deal.call:
@@ -260,8 +288,11 @@ def evaluate(deals: list[Deal], config_data: dict, now: datetime) -> dict:
             ))
             continue
 
-        # 6. Не заполнены обязательные поля
+        # 6. Не заполнены обязательные поля (стандартные + сопоставленные кастомные)
         missing = _missing_fields(deal, cfg.req_fields)
+        for key, label in cfg.required_custom:
+            if not (deal.custom or {}).get(key):
+                missing.append(label)
         if missing:
             regular.append(_mk(
                 deal, "fields", over=False, sla="—",

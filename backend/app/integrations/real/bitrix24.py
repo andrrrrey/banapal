@@ -46,9 +46,25 @@ def _call(method: str, params: dict | None = None) -> list[dict]:
     return out
 
 
-def normalize_deal(raw: dict) -> dict:
-    """Провайдер-специфичные поля сделки → нормализованная запись для ingest."""
+def _coerce(value: Any) -> str:
+    """Значение пользовательского поля Битрикс → строка (список → через запятую)."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(str(x) for x in value if x not in (None, ""))
+    return str(value)
+
+
+def normalize_deal(raw: dict, extra_fields: dict[str, str] | None = None) -> dict:
+    """Провайдер-специфичные поля сделки → нормализованная запись для ingest.
+
+    extra_fields — карта {семантический_ключ: код поля Битрикс} (сопоставление на
+    странице «Интеграции»); их значения складываются в result["custom"].
+    """
     deal_id = raw.get("ID") or raw.get("id")
+    custom: dict[str, str] = {}
+    for key, code in (extra_fields or {}).items():
+        custom[key] = _coerce(raw.get(code))
     return {
         "external_id": str(deal_id) if deal_id is not None else None,
         "ref": f"Сделка #{deal_id}" if deal_id is not None else "",
@@ -64,25 +80,40 @@ def normalize_deal(raw: dict) -> dict:
         "amount": int(float(raw.get("OPPORTUNITY") or 0)),
         "created": raw.get("DATE_CREATE"),
         "last_activity": raw.get("LAST_ACTIVITY_TIME") or raw.get("DATE_MODIFY"),
+        "custom": custom,
     }
 
 
 class RealBitrix24Adapter:
-    def fetch_deals(self, created_after: str | None = None) -> list[dict]:
-        params: dict[str, Any] = {
-            "select": [
-                "ID", "TITLE", "STAGE_ID", "STAGE_SEMANTIC_ID", "ASSIGNED_BY_ID",
-                "CONTACT_ID", "SOURCE_ID", "OPPORTUNITY", "DATE_CREATE", "DATE_MODIFY",
-                "LAST_ACTIVITY_TIME", "UTM_SOURCE", "UTM_CAMPAIGN",
-            ],
-        }
+    def fetch_deals(
+        self, created_after: str | None = None, extra_fields: dict[str, str] | None = None
+    ) -> list[dict]:
+        select = [
+            "ID", "TITLE", "STAGE_ID", "STAGE_SEMANTIC_ID", "ASSIGNED_BY_ID",
+            "CONTACT_ID", "SOURCE_ID", "OPPORTUNITY", "DATE_CREATE", "DATE_MODIFY",
+            "LAST_ACTIVITY_TIME", "UTM_SOURCE", "UTM_CAMPAIGN",
+        ]
+        # Добавляем сопоставленные пользовательские поля в выборку.
+        select += [c for c in {v for v in (extra_fields or {}).values() if v} if c not in select]
+        params: dict[str, Any] = {"select": select}
         # Ограничение периода резко сокращает объём выгрузки (иначе постранично
         # тянется вся история портала). created_after — дата в формате ISO 8601.
         if created_after:
             params["filter"] = {">=DATE_CREATE": created_after}
             params["order"] = {"DATE_CREATE": "DESC"}
         raw = _call("crm.deal.list", params)
-        return [normalize_deal(d) for d in raw]
+        return [normalize_deal(d, extra_fields) for d in raw]
+
+    def fetch_deal_fields(self) -> list[dict]:
+        """Список полей сделки: [{"code","title"}] (вкл. пользовательские UF_CRM_*)."""
+        with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+            resp = request("POST", f"{_base()}/crm.deal.fields.json", client=client, json={})
+        result = resp.json().get("result", {})
+        out: list[dict] = []
+        for code, meta in (result.items() if isinstance(result, dict) else []):
+            title = (meta or {}).get("title") or (meta or {}).get("formLabel") or code
+            out.append({"code": code, "title": str(title)})
+        return out
 
     def fetch_stage_history(self) -> list[dict]:
         return _call("crm.stagehistory.list", {"entityTypeId": 2})

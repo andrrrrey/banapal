@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, Segmented, Spin } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { FieldMapSection } from "@/components/FieldMapSection";
 import {
   type CheckResult,
   type CheckStatus,
@@ -391,6 +392,9 @@ export default function IntegrationsPage() {
           );
         })}
       </div>
+
+      {/* Сопоставление пользовательских полей Битрикс24 */}
+      <FieldMapSection targets={cfg.field_targets} initial={cfg.field_map} />
 
       {/* Нижняя панель действий */}
       <div className="intg-footer">

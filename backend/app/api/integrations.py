@@ -34,6 +34,11 @@ class SaveRequest(BaseModel):
     data_source: str | None = None
 
 
+class FieldMapRequest(BaseModel):
+    fields: dict[str, str] = Field(default_factory=dict)
+    required: list[str] = Field(default_factory=list)
+
+
 @router.get("")
 async def get_integrations(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     """Текущая конфигурация (секреты замаскированы) + режим источника данных."""
@@ -63,6 +68,36 @@ async def put_integrations(
 async def get_data_source(session: AsyncSession = Depends(get_session)) -> dict[str, str]:
     """Текущий источник данных (mock|real) — из БД, единый для всех воркеров."""
     return {"data_source": await cfg.load_data_source(session)}
+
+
+@router.put("/field-map")
+async def put_field_map(
+    payload: FieldMapRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Сохраняет сопоставление пользовательских полей Битрикс24."""
+    return await cfg.save_field_map(session, payload.fields, payload.required)
+
+
+@router.get("/bitrix/schema")
+async def bitrix_schema(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Живая схема воронки Битрикс24: поля сделки и стадии (для настройки маппинга)."""
+    await cfg.apply_overrides_from_db(session)
+
+    def _load() -> dict[str, Any]:
+        from app.integrations import factory
+        try:
+            fields = factory.get_bitrix24().fetch_deal_fields()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc), "fields": [], "stages": []}
+        stages = []
+        try:
+            stages = factory.get_bitrix24().fetch_stages()
+        except Exception:  # noqa: BLE001 — стадии необязательны для маппинга полей
+            pass
+        return {"ok": True, "fields": fields, "stages": stages}
+
+    return await run_in_threadpool(_load)
 
 
 @router.post("/check")

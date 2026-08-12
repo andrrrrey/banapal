@@ -17,6 +17,9 @@ async def evaluate_current(session: AsyncSession) -> dict:
         select(Deal).options(selectinload(Deal.tasks)).order_by(Deal.position)
     )).scalars().all()
     config = await content.regulation(session)
+    # Сопоставление пользовательских полей Битрикс — только для движка (не в админку).
+    from app.services.integrations_config import get_field_map
+    config = {**config, "field_map": await get_field_map(session)}
     return reglament.evaluate(list(deals), config, reference_now())
 
 
