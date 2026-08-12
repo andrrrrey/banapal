@@ -37,7 +37,6 @@ export const NAV_ITEMS: NavItem[] = [
     subtitle: "Контроль регламента в реальном времени",
     section: "Обзор",
     Icon: MonitorIcon,
-    badge: 9,
   },
   {
     key: "analytics",

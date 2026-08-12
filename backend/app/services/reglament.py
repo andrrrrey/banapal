@@ -105,6 +105,17 @@ def _dup_value(deal: Deal, dup_key: str) -> str | None:
     return deal.phone
 
 
+def _src_label(deal: Deal) -> str:
+    """Читаемый источник: сперва SOURCE_ID; иначе — имя кампании из UTM-строки."""
+    if deal.src:
+        return deal.src
+    camp = deal.campaign or ""
+    if "name:" in camp:  # UTM вида geo:...|system:...|name:<кампания>
+        camp = camp.split("name:", 1)[1].split("|")[0]
+    camp = camp.strip()
+    return (camp[:40] + "…" if len(camp) > 40 else camp) or "—"
+
+
 def _mk(deal: Deal, ptype: str, *, over: bool, sla: str, norm: str, amount: int, ai: str,
         category: str = "regular") -> dict:
     label, cls = KIND[ptype]
@@ -113,7 +124,7 @@ def _mk(deal: Deal, ptype: str, *, over: bool, sla: str, norm: str, amount: int,
         "severity": severity, "category": category, "ptype": ptype,
         "kind_label": label, "kind_class": cls,
         "name": f"{deal.name} · {deal.ref}" if deal.ref else deal.name,
-        "ref": deal.ref, "mgr": deal.mgr, "src": deal.campaign or deal.src,
+        "ref": deal.ref, "mgr": deal.mgr, "src": _src_label(deal),
         "norm": norm, "sla": sla, "over": over, "amount": amount, "ai": ai,
     }
 

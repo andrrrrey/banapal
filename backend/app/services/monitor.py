@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -31,12 +31,20 @@ async def stats(session: AsyncSession) -> dict:
     warn = [v for v in regular if v["severity"] == "warn"]
     money = vio.money_at_risk(regular)
 
+    # «В норме» — доля сделок без нарушений (движок выдаёт не более одного
+    # нарушения на сделку, поэтому len(regular) ≈ число проблемных сделок).
+    total = await session.scalar(select(func.count()).select_from(Deal)) or 0
+    if total:
+        norm = f"{round(max(total - len(regular), 0) / total * 100)}%"
+    else:
+        norm = "—"
+
     stat_rows = [
         {"n": str(len(over)), "label": "Критичные просрочки", "cls": "r"},
         {"n": f.money_short(money), "label": "Деньги под риском", "cls": "r"},
         {"n": str(len(warn)), "label": "Требуют внимания", "cls": "a"},
         {"n": str(len(review)), "label": "На проверке", "cls": "v"},
-        {"n": "96%", "label": "В норме сегодня", "cls": "g"},
+        {"n": norm, "label": "В норме", "cls": "g"},
     ]
     return {"stats": stat_rows, "badge": len(regular)}
 
