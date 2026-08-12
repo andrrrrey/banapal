@@ -461,3 +461,15 @@ tr.rk-row-mid td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 .fmap-target span { font-size: 12px; color: var(--muted); }
 .fmap-select { width: 280px; flex: none; }
 @media (max-width: 900px) { .fmap-row { flex-wrap: wrap; } .fmap-select { width: 100%; } }
+
+/* Структура реплики mpdb */
+.mpdb-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.mpdb-count { font-size: 12px; color: var(--muted); }
+.mpdb-tables { display: flex; flex-direction: column; gap: 10px; max-height: 460px; overflow-y: auto; }
+.mpdb-table { border: 1px solid var(--line2); border-radius: 10px; padding: 10px 12px; }
+.mpdb-table-name { font-weight: 600; font-size: 13.5px; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.mpdb-col-count { font-size: 11px; font-weight: 400; color: var(--muted); }
+.mpdb-cols { display: flex; flex-wrap: wrap; gap: 6px; }
+.mpdb-col { display: inline-flex; align-items: baseline; gap: 5px; padding: 2px 8px; border-radius: 6px; background: var(--line); font-size: 12px; }
+.mpdb-col b { font-weight: 600; }
+.mpdb-col i { font-style: normal; color: var(--muted); font-size: 11px; }

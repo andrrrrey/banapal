@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import require_session
+from app.core.config import settings
 from app.core.db import get_session
 from app.services import integrations_check as checker
 from app.services import integrations_config as cfg
@@ -96,6 +97,25 @@ async def bitrix_schema(session: AsyncSession = Depends(get_session)) -> dict[st
         except Exception:  # noqa: BLE001 — стадии необязательны для маппинга полей
             pass
         return {"ok": True, "fields": fields, "stages": stages}
+
+    return await run_in_threadpool(_load)
+
+
+@router.get("/moysklad/schema")
+async def moysklad_schema(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Структура Postgres-реплики `mpdb`: таблицы и колонки (для сопоставления)."""
+    await cfg.apply_overrides_from_db(session)
+    dsn = (settings.moysklad_pg_dsn or "").strip()
+    if not dsn:
+        return {"ok": False, "error": "DSN реплики (mpdb) не задан", "tables": []}
+
+    def _load() -> dict[str, Any]:
+        from app.integrations.real import _pg
+        try:
+            tables = _pg.introspect(dsn)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc), "tables": []}
+        return {"ok": True, "tables": tables}
 
     return await run_in_threadpool(_load)
 

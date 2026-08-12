@@ -59,3 +59,29 @@ def run_query(dsn: str, sql: str, *args: Any) -> list[dict]:
 def ping(dsn: str) -> None:
     """Лёгкая проверка доступности реплики (`SELECT 1`). Бросает при ошибке."""
     run_query(dsn, "SELECT 1")
+
+
+# Интроспекция схемы: только пользовательские таблицы (без системных схем).
+_INTROSPECT_SQL = """
+    SELECT table_schema, table_name, column_name, data_type, ordinal_position
+    FROM information_schema.columns
+    WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+    ORDER BY table_schema, table_name, ordinal_position
+"""
+
+
+def introspect(dsn: str) -> list[dict]:
+    """Список таблиц реплики с колонками: [{schema, table, columns:[{name,type}]}].
+
+    Позволяет разобрать структуру `mpdb` прямо из интерфейса, без ручного описания
+    от заказчика: имена таблиц/колонок читаются из information_schema.
+    """
+    rows = run_query(dsn, _INTROSPECT_SQL)
+    tables: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        key = (r["table_schema"], r["table_name"])
+        entry = tables.setdefault(
+            key, {"schema": r["table_schema"], "table": r["table_name"], "columns": []}
+        )
+        entry["columns"].append({"name": r["column_name"], "type": r["data_type"]})
+    return list(tables.values())

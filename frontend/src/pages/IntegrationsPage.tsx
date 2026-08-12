@@ -3,6 +3,7 @@ import { App, Button, Input, Segmented, Spin } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { FieldMapSection } from "@/components/FieldMapSection";
+import { MpdbSchemaSection } from "@/components/MpdbSchemaSection";
 import {
   type CheckResult,
   type CheckStatus,
@@ -395,6 +396,9 @@ export default function IntegrationsPage() {
 
       {/* Сопоставление пользовательских полей Битрикс24 */}
       <FieldMapSection targets={cfg.field_targets} initial={cfg.field_map} />
+
+      {/* Структура Postgres-реплики МойСклад (mpdb) */}
+      <MpdbSchemaSection />
 
       {/* Нижняя панель действий */}
       <div className="intg-footer">
