@@ -17,6 +17,10 @@ class MockBitrix24Adapter:
         # Задачи моделируются флагом has_task сделки (создаются при сиде).
         return []
 
+    def fetch_users(self) -> list[dict]:
+        # В mock ответственные уже заданы именами в демо-сделках.
+        return []
+
     def create_task(self, payload: dict) -> dict:
         # В mock-режиме постановка задачи в Битрикс24 не выполняется (нет записи).
         return {"ok": True, "external_id": None, "mock": True}

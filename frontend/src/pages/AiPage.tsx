@@ -1,6 +1,7 @@
 import { Spin } from "antd";
 
 import { type Insight, useInsights } from "@/api/ai";
+import { EmptyState } from "@/components/EmptyState";
 
 const ICONS: Record<string, string> = {
   alert: '<path d="M12 8v4M12 16h.01M10.3 3.9L2.6 17.5a2 2 0 001.7 3h15.4a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" stroke-linejoin="round"/>',
@@ -60,12 +61,19 @@ export default function AiPage() {
         </div>
       </div>
 
-      {insights.data ? (
+      {!insights.data ? (
+        <div style={{ padding: 40, textAlign: "center" }}><Spin /></div>
+      ) : insights.data.length ? (
         <div className="grid" style={{ gap: 12 }}>
           {insights.data.map((x, i) => <InsightCard key={i} x={x} />)}
         </div>
       ) : (
-        <div style={{ padding: 40, textAlign: "center" }}><Spin /></div>
+        <div className="card">
+          <EmptyState
+            title="AI-инсайтов пока нет"
+            hint="Подключите AI-интеграцию (API-ключ и Base URL LLM) на странице «Интеграции» и нажмите «Сгенерировать AI-советы и отчёты»."
+          />
+        </div>
       )}
     </>
   );

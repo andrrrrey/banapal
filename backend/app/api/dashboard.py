@@ -26,6 +26,12 @@ async def get_attention(session: AsyncSession = Depends(get_session)) -> dict[st
     return await metrics.attention(session)
 
 
+@router.get("/filters")
+async def get_filters(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Реальные опции фильтров (менеджеры/каналы/источники) из текущих данных."""
+    return await metrics.filter_options(session)
+
+
 @router.get("/funnel")
 async def get_funnel(
     period: str = "30", session: AsyncSession = Depends(get_session)

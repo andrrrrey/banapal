@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models import Baseline, Channel, Deal, KpiCard, ManagerControl
 from app.services import format as f
 from app.services import period as per
@@ -24,6 +25,9 @@ async def kpis(session: AsyncSession, period: str) -> list[dict]:
     m = per.mult(period)
     base = await _baselines(session)
     cards = (await session.execute(select(KpiCard).order_by(KpiCard.position))).scalars().all()
+    # В боевом режиме демо-дельты и спарклайны из сида не показываем — только
+    # реальные значения (тренд формируется на этапе накопления истории).
+    real = settings.data_source == "real"
 
     out: list[dict] = []
     for c in cards:
@@ -41,10 +45,31 @@ async def kpis(session: AsyncSession, period: str) -> list[dict]:
                 display = f.fmt(raw)
         out.append({
             "key": c.key, "label": c.label, "icon": c.icon, "svg": c.svg, "kind": c.kind,
-            "value": value, "display": display, "trend": c.trend, "delta": c.delta,
-            "spark": c.spark, "drill": c.drill, "period_label": per.label(period),
+            "value": value, "display": display,
+            "trend": "flat" if real else c.trend,
+            "delta": "" if real else c.delta,
+            "spark": [] if real else c.spark,
+            "drill": c.drill, "period_label": per.label(period),
         })
     return out
+
+
+async def filter_options(session: AsyncSession) -> dict:
+    """Реальные значения для фильтров (менеджеры/каналы/источники) из данных БД."""
+    mgrs = (await session.execute(
+        select(Deal.mgr).where(Deal.mgr.is_not(None), Deal.mgr != "—").distinct()
+    )).scalars().all()
+    chans = (await session.execute(
+        select(Channel.name).order_by(Channel.position)
+    )).scalars().all()
+    srcs = (await session.execute(
+        select(Deal.src).where(Deal.src.is_not(None), Deal.src != "—").distinct()
+    )).scalars().all()
+    return {
+        "managers": sorted({m for m in mgrs if m}),
+        "channels": list(chans),
+        "sources": sorted({s for s in srcs if s}),
+    }
 
 
 async def funnel(session: AsyncSession, period: str) -> list[dict]:

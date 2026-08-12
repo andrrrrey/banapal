@@ -1,8 +1,10 @@
 import { Select } from "antd";
 
+import { useFilterOptions } from "@/api/dashboard";
 import { useFilters } from "@/state/filters";
 
-// Панель фильтров из прототипа, связанная с глобальным состоянием.
+// Панель фильтров. Опции менеджеров/каналов/источников — реальные из данных БД
+// (в боевом режиме отражают подключённые интеграции; в демо — демо-значения).
 const PERIODS = [
   { key: "today", label: "Сегодня" },
   { key: "7", label: "7 дней" },
@@ -10,19 +12,13 @@ const PERIODS = [
   { key: "quarter", label: "Квартал" },
 ];
 
-const CHANNELS = [
-  "Все каналы", "Яндекс Директ — Поиск", "Яндекс Директ — РСЯ",
-  "Органический поиск", "Прямые заходы", "Соцсети",
-];
-const MANAGERS = ["Все менеджеры", "Азалия Хаметова", "Дмитрий Крылов", "Ольга Северцева", "Тимур Рахимов"];
-const SOURCES = ["Все источники", "Поиск", "РСЯ", "Сайт", "Звонок"];
-
-function opts(values: string[], allValue: string) {
-  return values.map((v, i) => ({ value: i === 0 ? allValue : v, label: v }));
+function opts(all: string, values: string[]) {
+  return [{ value: "all", label: all }, ...values.map((v) => ({ value: v, label: v }))];
 }
 
 export function FilterBar() {
   const f = useFilters();
+  const o = useFilterOptions();
 
   return (
     <div className="filterbar">
@@ -37,19 +33,19 @@ export function FilterBar() {
       <Select
         value={f.channel}
         onChange={f.setChannel}
-        options={opts(CHANNELS, "all")}
+        options={opts("Все каналы", o.data?.channels ?? [])}
         style={{ width: 200 }}
       />
       <Select
         value={f.mgr}
         onChange={(v) => { f.setMgr(v); f.setLeadFilter(null); }}
-        options={opts(MANAGERS, "all")}
+        options={opts("Все менеджеры", o.data?.managers ?? [])}
         style={{ width: 190 }}
       />
       <Select
         value={f.source}
         onChange={f.setSource}
-        options={opts(SOURCES, "all")}
+        options={opts("Все источники", o.data?.sources ?? [])}
         style={{ width: 160 }}
       />
     </div>

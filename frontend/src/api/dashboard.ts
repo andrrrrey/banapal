@@ -53,6 +53,15 @@ export interface Lead {
 
 const P = (period: string) => `?period=${encodeURIComponent(period)}`;
 
+export interface FilterOptions { managers: string[]; channels: string[]; sources: string[]; }
+
+export const useFilterOptions = () =>
+  useQuery<FilterOptions>({
+    queryKey: ["dashboard", "filters"],
+    queryFn: () => api.get("/dashboard/filters"),
+    staleTime: 60_000,
+  });
+
 export const useKpis = (period: string) =>
   useQuery<Kpi[]>({ queryKey: ["dashboard", "kpis", period], queryFn: () => api.get(`/dashboard/kpis${P(period)}`) });
 

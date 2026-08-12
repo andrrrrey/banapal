@@ -84,6 +84,19 @@ class RealBitrix24Adapter:
     def fetch_stage_history(self) -> list[dict]:
         return _call("crm.stagehistory.list", {"entityTypeId": 2})
 
+    def fetch_users(self) -> list[dict]:
+        """Справочник сотрудников портала: [{"id", "name"}] для резолва ID → ФИО."""
+        raw = _call("user.get", {})
+        out: list[dict] = []
+        for u in raw:
+            uid = u.get("ID") or u.get("id")
+            if uid is None:
+                continue
+            parts = [u.get("NAME"), u.get("LAST_NAME")]
+            name = " ".join(str(p).strip() for p in parts if p).strip()
+            out.append({"id": str(uid), "name": name or f"ID {uid}"})
+        return out
+
     def fetch_tasks(self) -> list[dict]:
         return _call("tasks.task.list", {})
 
