@@ -21,6 +21,10 @@ class MockBitrix24Adapter:
         # В mock ответственные уже заданы именами в демо-сделках.
         return []
 
+    def fetch_stages(self) -> list[dict]:
+        # В mock стадии уже заданы читаемыми названиями в демо-сделках.
+        return []
+
     def create_task(self, payload: dict) -> dict:
         # В mock-режиме постановка задачи в Битрикс24 не выполняется (нет записи).
         return {"ok": True, "external_id": None, "mock": True}

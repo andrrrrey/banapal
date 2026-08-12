@@ -24,6 +24,27 @@ from app.services.calendar import (
 TERMINAL_STAGES = {"Оплачено", "Успешно реализовано", "Отказ", "Спам"}
 NEW_STAGES = {"Новое обращение", "Новый заказ"}
 
+# Устойчивое распознавание типа этапа: реальные сделки Битрикс приходят с
+# кодами стадий (C10:NEW, LOSE, WON…) или названиями воронки Заказчика, которые
+# не совпадают с демо-набором. Поэтому дополнительно матчим по ключевым словам.
+_TERMINAL_KEYS = ("отказ", "спам", "успешно", "реализ", "оплач", "заверш",
+                  "won", "lose", "fail", "success")
+_NEW_KEYS = ("новое обращение", "новый заказ")
+
+
+def is_terminal_stage(stage: str | None) -> bool:
+    if stage in TERMINAL_STAGES:
+        return True
+    s = (stage or "").lower()
+    return any(k in s for k in _TERMINAL_KEYS)
+
+
+def is_new_stage(stage: str | None) -> bool:
+    if stage in NEW_STAGES:
+        return True
+    s = (stage or "").lower()
+    return s.endswith("new") or any(k in s for k in _NEW_KEYS)
+
 KIND = {
     "overdue_contact": ("Просрочка первого контакта", "t-red"),
     "no_task": ("Сделка без задачи", "t-amber"),
@@ -36,12 +57,17 @@ KIND = {
 }
 
 # Этап сделки → правило задачи (task_rules), определяющее обязательность задачи.
+# Ключи включают как демо-названия, так и названия этапов из регламента Заказчика.
 STAGE_TASK_RULE = {
     "Новое обращение": "Новый лид",
     "Новый заказ": "Новый лид",
     "Квалификация": "Квалификация",
+    "Обращение взято в работу / Квалификация": "Квалификация",
+    "Взято в работу": "Квалификация",
     "Ожидание заказа": "КП отправлено",
+    "Ожидание заказа / Квалифицирован": "КП отправлено",
     "Счёт на предоплату": "Счёт выставлен",
+    "Счет на предоплату": "Счёт выставлен",
 }
 
 # Короткие подписи обязательных полей и предикаты их заполнения.
@@ -137,7 +163,7 @@ def evaluate(deals: list[Deal], config_data: dict, now: datetime) -> dict:
     # Карта телефонов для поиска дублей (первая встреченная сделка — эталон).
     seen_key: dict[str, Deal] = {}
     for d in sorted(deals, key=lambda x: x.position):
-        if d.stage in TERMINAL_STAGES:
+        if is_terminal_stage(d.stage):
             continue
         key = _dup_value(d, cfg.dup_key)
         if key and key not in seen_key:
@@ -148,10 +174,11 @@ def evaluate(deals: list[Deal], config_data: dict, now: datetime) -> dict:
 
     for deal in sorted(deals, key=lambda x: x.position):
         stage = deal.stage or ""
-        terminal = stage in TERMINAL_STAGES
+        terminal = is_terminal_stage(stage)
+        low = stage.lower()
 
         # --- Оценочные (эвристика, решение за руководителем) ---
-        if stage == "Отказ" and cfg.highlight_refusal and not deal.call:
+        if ("отказ" in low or stage == "Отказ") and cfg.highlight_refusal and not deal.call:
             if deal.created_at and deal.last_activity_at:
                 if business_minutes(deal.created_at, deal.last_activity_at, sched) < 10:
                     review.append(_mk(
@@ -161,7 +188,7 @@ def evaluate(deals: list[Deal], config_data: dict, now: datetime) -> dict:
                            "Автоклассификации не поддаётся — вынесено на проверку.",
                     ))
                     continue
-        if stage == "Спам" and cfg.highlight_spam and deal.call:
+        if ("спам" in low or stage == "Спам") and cfg.highlight_spam and deal.call:
             review.append(_mk(
                 deal, "spam", over=False, sla="—", norm="", amount=0, category="review",
                 ai="Был активный диалог, затем перевод в «Спам». Похоже на «чистку "
@@ -174,7 +201,7 @@ def evaluate(deals: list[Deal], config_data: dict, now: datetime) -> dict:
 
         # --- Регулярные нарушения (приоритет сверху вниз, одно на сделку) ---
         # 1. Просрочка первого контакта
-        if stage in NEW_STAGES and deal.first_contact_at is None and deal.created_at:
+        if is_new_stage(stage) and deal.first_contact_at is None and deal.created_at:
             elapsed = business_minutes(deal.created_at, now, sched)
             if elapsed >= cfg.first_contact_min:
                 el = format_business(elapsed, sched)
@@ -211,7 +238,7 @@ def evaluate(deals: list[Deal], config_data: dict, now: datetime) -> dict:
             continue
 
         # 4. Лид без повторного касания
-        if stage not in NEW_STAGES and deal.first_contact_at and deal.last_activity_at:
+        if not is_new_stage(stage) and deal.first_contact_at and deal.last_activity_at:
             days = calendar_days(deal.last_activity_at, now)
             if days >= RECONTACT_DAYS:
                 regular.append(_mk(

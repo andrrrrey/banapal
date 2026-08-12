@@ -54,6 +54,8 @@ def normalize_deal(raw: dict) -> dict:
         "ref": f"Сделка #{deal_id}" if deal_id is not None else "",
         "name": raw.get("TITLE") or raw.get("NAME") or "Без названия",
         "stage": raw.get("STAGE_ID"),
+        # Семантика стадии Битрикс: P — в работе, S — успех, F — провал/отказ.
+        "semantic": raw.get("STAGE_SEMANTIC_ID"),
         "mgr": raw.get("ASSIGNED_BY_ID"),  # id; резолв имени — на этапе настройки
         "src": raw.get("SOURCE_ID"),
         "utm": raw.get("UTM_SOURCE"),
@@ -68,7 +70,7 @@ class RealBitrix24Adapter:
     def fetch_deals(self, created_after: str | None = None) -> list[dict]:
         params: dict[str, Any] = {
             "select": [
-                "ID", "TITLE", "STAGE_ID", "ASSIGNED_BY_ID", "SOURCE_ID",
+                "ID", "TITLE", "STAGE_ID", "STAGE_SEMANTIC_ID", "ASSIGNED_BY_ID", "SOURCE_ID",
                 "OPPORTUNITY", "DATE_CREATE", "DATE_MODIFY", "LAST_ACTIVITY_TIME",
                 "UTM_SOURCE", "UTM_CAMPAIGN",
             ],
@@ -95,6 +97,16 @@ class RealBitrix24Adapter:
             parts = [u.get("NAME"), u.get("LAST_NAME")]
             name = " ".join(str(p).strip() for p in parts if p).strip()
             out.append({"id": str(uid), "name": name or f"ID {uid}"})
+        return out
+
+    def fetch_stages(self) -> list[dict]:
+        """Справочник стадий воронки: [{"id", "name"}] для резолва STAGE_ID → название."""
+        raw = _call("crm.status.list", {})
+        out: list[dict] = []
+        for s in raw:
+            sid = s.get("STATUS_ID")
+            if sid:
+                out.append({"id": str(sid), "name": s.get("NAME") or str(sid)})
         return out
 
     def fetch_tasks(self) -> list[dict]:
