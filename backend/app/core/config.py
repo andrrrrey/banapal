@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     calltouch_site_id: str = ""
     calltouch_client_api_id: str = ""
     moysklad_token: str = ""
+    # DSN Postgres-реплики МойСклад (`mpdb`) — первичный источник данных МойСклад,
+    # API МойСклад используется как резерв. Формат:
+    # postgresql://user:pass@host:5432/mpdb[?sslmode=require]
+    moysklad_pg_dsn: str = ""
 
     # --- AI-слой ---
     llm_api_key: str = ""

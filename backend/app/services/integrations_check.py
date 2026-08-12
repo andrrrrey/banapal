@@ -190,10 +190,36 @@ def check_calltouch() -> dict:
     return _err(f"API Calltouch вернул HTTP {resp.status_code}.")
 
 
+def _check_moysklad_db(dsn: str) -> dict:
+    """Проверка доступности Postgres-реплики МойСклад (`mpdb`)."""
+    from app.integrations.real import _pg
+    try:
+        _pg.ping(dsn)
+    except Exception as exc:  # noqa: BLE001
+        return _err("Реплика МойСклад (mpdb) недоступна.", _describe_exc(exc))
+    return _ok("Реплика МойСклад (mpdb) отвечает.")
+
+
 def check_moysklad() -> dict:
+    dsn = (settings.moysklad_pg_dsn or "").strip()
     token = settings.moysklad_token or ""
-    if not token:
-        return _missing("Не указан токен МойСклад.")
+    if not dsn and not token:
+        return _missing("Не указаны ни DSN реплики (mpdb), ни токен МойСклад.")
+
+    # Если задан DSN — реплика первична; сообщаем её статус, а API помечаем резервом.
+    if dsn:
+        db = _check_moysklad_db(dsn)
+        reserve = " Резерв (API): токен задан." if token else " Резерв (API) не настроен."
+        if db["status"] == "ok":
+            return _ok(db["message"], (db.get("detail", "") + reserve).strip())
+        # Реплика недоступна — но если есть токен, источник всё равно рабочий (через API).
+        if token:
+            return _err(
+                "Реплика недоступна — данные пойдут из API (резерв).",
+                db.get("detail", ""),
+            )
+        return db
+
     headers = {"Authorization": f"Bearer {token}", "Accept-Encoding": "gzip"}
     try:
         resp = httpx.get(
