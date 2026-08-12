@@ -214,6 +214,10 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     await session.execute(delete(AdCost))
     await session.execute(delete(Product))
     await session.execute(delete(Baseline))
+    # Демо-таблицы без реального источника (менеджеры/рекомендации/минус-слова/
+    # демо-история) в боевом режиме держим пустыми — разделы покажут «нет данных».
+    from app.services import data_mode
+    await data_mode.clear_no_source_tables(session)
 
     for i, nd in enumerate(deals):
         session.add(_deal_from_bitrix(i, nd))

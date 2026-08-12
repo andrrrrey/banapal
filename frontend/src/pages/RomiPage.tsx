@@ -5,6 +5,7 @@ import {
   type BudgetRec, useBudgetRecs, useCampaignsBubble, useMinusWords, useRomiChannels,
 } from "@/api/romi";
 import { EChart } from "@/components/EChart";
+import { EmptyState } from "@/components/EmptyState";
 import { bubbleOption, romiSpendMarginOption } from "@/components/chartOptions";
 
 const MS_STATUS: Record<string, [string, string]> = {
@@ -80,14 +81,30 @@ export default function RomiPage() {
       </div>
 
       <h3 style={{ fontSize: 15, fontWeight: 600, margin: "22px 0 0" }}>Рекомендации AI по бюджету</h3>
-      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 12 }}>
-        {recs.data?.map((r, i) => <RecCard key={i} r={r} />)}
-      </div>
+      {recs.data && recs.data.length === 0 ? (
+        <div className="card" style={{ marginTop: 12 }}>
+          <EmptyState
+            title="Рекомендаций пока нет"
+            hint="Рекомендации по бюджету формирует AI-слой по данным Директа и МойСклад. Подключите интеграции и выполните пересчёт (для советов — «Сгенерировать AI» на странице «Интеграции»)."
+          />
+        </div>
+      ) : (
+        <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 12 }}>
+          {recs.data?.map((r, i) => <RecCard key={i} r={r} />)}
+        </div>
+      )}
 
       <div className="card" style={{ marginTop: 18 }}>
         <div className="card-h">
           <div><h3>Минус-слова · рабочий список</h3></div>
         </div>
+        {mw.data && mw.data.items.length === 0 ? (
+          <EmptyState
+            title="Нет кандидатов в минус-слова"
+            hint="Список формируется из отчёта по поисковым запросам Яндекс Директа. Подключите Директ и выполните пересчёт."
+          />
+        ) : (
+        <>
         <div className="tbl-wrap">
           <table>
             <thead>
@@ -118,6 +135,8 @@ export default function RomiPage() {
         <div style={{ padding: "12px 14px", fontSize: 12, color: "var(--muted)" }}>
           Показаны 10 из <b>{mw.data?.summary.count ?? "—"}</b> кандидатов. Полный список — в выгрузке ниже.
         </div>
+        </>
+        )}
       </div>
 
       <div className="card export-card" style={{ marginTop: 16 }}>

@@ -8,6 +8,7 @@ import {
   useRollback,
   useSaveRegulation,
 } from "@/api/admin";
+import { EmptyState } from "@/components/EmptyState";
 import { CheckIcon } from "@/components/icons";
 
 /* --- Мелкие контролы в стиле прототипа --- */
@@ -271,6 +272,12 @@ export default function AdminPage() {
           <h3>История изменений регламента</h3>
           <span className="sub">кто, когда и что изменил · защита от случайных правок</span>
         </div>
+        {history.data && history.data.length === 0 ? (
+          <EmptyState
+            title="История изменений пуста"
+            hint="Записи появятся после первых изменений параметров регламента."
+          />
+        ) : (
         <div className="tbl-wrap">
           <table className="htable">
             <thead>
@@ -314,6 +321,7 @@ export default function AdminPage() {
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>

@@ -356,6 +356,8 @@ async def save_config(
     """
     row = await _load_row(session)
     data: dict[str, str] = dict(row.data) if row and isinstance(row.data, dict) else {}
+    # Прежний источник данных — чтобы отследить переключение mock↔real.
+    old_ds = data.get(_DS_KEY) if data.get(_DS_KEY) in ("mock", "real") else settings.data_source
 
     applied: dict[str, str] = {}
 
@@ -390,6 +392,17 @@ async def save_config(
     _apply_to_settings(applied)
     if data_source in ("mock", "real"):
         settings.data_source = data_source  # type: ignore[assignment]
+
+    # Переключение режима: боевой — убрать демо; демо — восстановить.
+    if data_source in ("mock", "real") and data_source != old_ds:
+        from app.services import data_mode
+        try:
+            if data_source == "real":
+                await data_mode.switch_to_real(session)
+            else:
+                await data_mode.switch_to_mock(session)
+        except Exception as exc:  # noqa: BLE001 — сохранение настроек важнее
+            logger.warning("Переключение режима данных: %s", exc)
 
     logger.info(
         "Настройки интеграций сохранены: полей=%d, data_source=%s",

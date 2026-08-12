@@ -3,6 +3,7 @@ import { Spin } from "antd";
 import { useChain, useChannels } from "@/api/analytics";
 import { ChainView } from "@/components/ChainView";
 import { ChannelsTable } from "@/components/ChannelsTable";
+import { EmptyState } from "@/components/EmptyState";
 import { useFilters } from "@/state/filters";
 
 export default function AnalyticsPage() {
@@ -24,7 +25,16 @@ export default function AnalyticsPage() {
         <div className="card-h">
           <div><h3>Сводка по каналам и кампаниям</h3></div>
         </div>
-        {channels.data ? <ChannelsTable rows={channels.data} /> : <div style={{ padding: 30 }}><Spin /></div>}
+        {!channels.data ? (
+          <div style={{ padding: 30 }}><Spin /></div>
+        ) : channels.data.length ? (
+          <ChannelsTable rows={channels.data} />
+        ) : (
+          <EmptyState
+            title="Нет данных по каналам"
+            hint="Сводка по каналам собирается из расходов Яндекс Директа и выручки Битрикс24/МойСклад. Подключите источники и выполните пересчёт."
+          />
+        )}
       </div>
     </>
   );

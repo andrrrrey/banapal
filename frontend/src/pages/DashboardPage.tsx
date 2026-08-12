@@ -7,6 +7,7 @@ import {
 } from "@/api/dashboard";
 import { AttentionBlock } from "@/components/AttentionBlock";
 import { EChart } from "@/components/EChart";
+import { EmptyState } from "@/components/EmptyState";
 import { KpiRow } from "@/components/KpiRow";
 import { LeadsTable } from "@/components/LeadsTable";
 import { ManagersTable } from "@/components/ManagersTable";
@@ -59,11 +60,29 @@ export default function DashboardPage() {
       </div>
 
       <div style={{ marginTop: 16 }}>
-        {managers.data ? <ManagersTable rows={managers.data} /> : null}
+        {managers.data && managers.data.length ? (
+          <ManagersTable rows={managers.data} />
+        ) : managers.data ? (
+          <div className="card">
+            <EmptyState
+              title="Нет данных по менеджерам"
+              hint="Агрегаты по менеджерам появятся после сопоставления пользователей Битрикс24 при настройке интеграции."
+            />
+          </div>
+        ) : null}
       </div>
 
       <div style={{ marginTop: 16 }}>
-        {leads.data ? <LeadsTable rows={leads.data} /> : null}
+        {leads.data && leads.data.length ? (
+          <LeadsTable rows={leads.data} />
+        ) : leads.data ? (
+          <div className="card">
+            <EmptyState
+              title="Нет сделок за период"
+              hint="Подключите Битрикс24 на странице «Интеграции» и выполните пересчёт."
+            />
+          </div>
+        ) : null}
       </div>
     </>
   );
