@@ -1,8 +1,22 @@
 import { NavLink } from "react-router-dom";
 
+import { useDataSource } from "@/api/integrations";
+import { useMonitorStats } from "@/api/monitor";
 import { NAV_ITEMS, NAV_SECTIONS } from "./navConfig";
 
 export function Sidebar() {
+  const mon = useMonitorStats();
+  const ds = useDataSource();
+  const isReal = ds.data?.data_source === "real";
+
+  // Реальный счётчик нарушений на пункте «Мониторинг» (вместо статичного).
+  const badgeFor = (key: string): string | null => {
+    if (key !== "monitor") return null;
+    const n = mon.data?.badge ?? 0;
+    if (!n) return null;
+    return n > 99 ? "99+" : String(n);
+  };
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -19,11 +33,12 @@ export function Sidebar() {
             <div className="nav-label">{section}</div>
             {NAV_ITEMS.filter((i) => i.section === section).map((item) => {
               const { Icon } = item;
+              const badge = badgeFor(item.key);
               return (
                 <NavLink key={item.key} to={item.path} className={({ isActive }) => (isActive ? "active" : "")}>
                   <Icon />
                   {item.label}
-                  {item.badge ? <span className="badge">{item.badge}</span> : null}
+                  {badge ? <span className="badge">{badge}</span> : null}
                 </NavLink>
               );
             })}
@@ -32,7 +47,7 @@ export function Sidebar() {
       </nav>
 
       <div className="side-foot">
-        <b>Демо-данные</b>
+        <b>{isReal ? "Боевые интеграции" : "Демо-данные"}</b>
         <br />
         Этап 1 · единая система контроля и аналитики
       </div>

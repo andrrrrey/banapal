@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.models import Baseline, Channel, MinusWord
 from app.seeds.chain import CHAIN_STEPS
 from app.services import format as f
@@ -17,14 +18,21 @@ def _digits(text: str) -> int:
     return int(d) if d else 0
 
 
+def _has_num(text: str) -> bool:
+    return any(ch.isdigit() for ch in text)
+
+
 async def chain(session: AsyncSession, period: str) -> list[dict]:
     m = per.mult(period)
     base = {b.key: b.value for b in (await session.execute(select(Baseline))).scalars().all()}
+    real = settings.data_source == "real"
 
     steps: list[dict] = []
     for s in CHAIN_STEPS:
         if "static" in s:
-            display = s["static"]
+            # Клики/визиты требуют Яндекс Директ/Метрику. В боевом режиме без этих
+            # источников показываем «нет данных», а не демо-значение из прототипа.
+            display = "нет данных" if real else s["static"]
         else:
             raw = base.get(s["base_key"], 0) * m
             display = f.money_short(raw) if s.get("kind") == "money" else f.fmt(raw)
@@ -33,9 +41,9 @@ async def chain(session: AsyncSession, period: str) -> list[dict]:
             "width": s["width"], "glow": s.get("glow", False), "display": display,
         })
 
-    # Конверсия между шагами (как в прототипе — по числам из подписи).
+    # Конверсия между шагами — только когда у обоих соседних шагов есть числа.
     for i, step in enumerate(steps):
-        if i == 0:
+        if i == 0 or not _has_num(steps[i - 1]["display"]) or not _has_num(step["display"]):
             step["conversion"] = None
         else:
             prev = _digits(steps[i - 1]["display"]) or 1

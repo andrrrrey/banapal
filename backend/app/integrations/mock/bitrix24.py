@@ -6,8 +6,13 @@ from app.seeds.leads import ALL_DEALS
 
 
 class MockBitrix24Adapter:
-    def fetch_deals(self, created_after: str | None = None) -> list[dict]:  # noqa: ARG002
+    def fetch_deals(
+        self, created_after: str | None = None, extra_fields: dict | None = None,  # noqa: ARG002
+    ) -> list[dict]:
         return [dict(row) for row in ALL_DEALS]
+
+    def fetch_deal_fields(self) -> list[dict]:
+        return []
 
     def fetch_stage_history(self) -> list[dict]:
         # История этапов моделируется полем stage_entered_at сделки.
@@ -20,6 +25,14 @@ class MockBitrix24Adapter:
     def fetch_users(self) -> list[dict]:
         # В mock ответственные уже заданы именами в демо-сделках.
         return []
+
+    def fetch_stages(self) -> list[dict]:
+        # В mock стадии уже заданы читаемыми названиями в демо-сделках.
+        return []
+
+    def fetch_contact_phones(self, contact_ids: list[str]) -> dict[str, str]:  # noqa: ARG002
+        # В mock телефоны уже заданы в демо-сделках.
+        return {}
 
     def create_task(self, payload: dict) -> dict:
         # В mock-режиме постановка задачи в Битрикс24 не выполняется (нет записи).

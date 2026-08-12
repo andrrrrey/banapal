@@ -50,6 +50,8 @@ class Deal(Base):
     phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     email: Mapped[str | None] = mapped_column(String(128), nullable=True)
     client_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Значения сопоставленных пользовательских полей Битрикс: {ключ: значение}.
+    custom: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     first_contact_at: Mapped[datetime | None] = mapped_column(

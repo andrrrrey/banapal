@@ -44,24 +44,38 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
-def _stage_class(stage: str | None) -> str:
-    """CSS-класс статуса лида по этапу (нейтральный, без выдумок)."""
+def _stage_class(stage: str | None, semantic: str | None) -> str:
+    """CSS-класс статуса лида: по семантике Битрикс (S/F/P), иначе по названию."""
+    if semantic == "S":
+        return "st-ok"
+    if semantic == "F":
+        return "st-bad"
     s = (stage or "").lower()
-    if any(k in s for k in ("оплач", "успешно", "won")):
+    if any(k in s for k in ("оплач", "успешно", "реализ", "won")):
         return "st-ok"
     if any(k in s for k in ("отказ", "спам", "lose", "fail")):
         return "st-bad"
     return "st-mid"
 
 
-def _deal_from_bitrix(position: int, nd: dict, users: dict[str, str] | None = None) -> Deal:
+def _deal_from_bitrix(
+    position: int, nd: dict,
+    users: dict[str, str] | None = None,
+    stages: dict[str, str] | None = None,
+    phones: dict[str, str] | None = None,
+) -> Deal:
     """Нормализованная сделка Битрикс24 → строка Deal (минимальный безопасный маппинг).
 
-    users: карта ID сотрудника → ФИО (для отображения имени ответственного).
+    users: ID сотрудника → ФИО; stages: STAGE_ID → название; phones: contact_id → телефон.
     """
-    stage = nd.get("stage")
+    code = nd.get("stage")
+    semantic = nd.get("semantic")
+    stage = (stages or {}).get(str(code)) or code  # человекочитаемое название стадии
     mgr_id = str(nd.get("mgr") or "").strip()
     mgr = (users or {}).get(mgr_id) or mgr_id or "—"
+    contact_id = str(nd.get("contact_id") or "").strip()
+    phone = (phones or {}).get(contact_id)
+    custom = nd.get("custom") or {}
     return Deal(
         position=position,
         on_dashboard=True,
@@ -71,8 +85,12 @@ def _deal_from_bitrix(position: int, nd: dict, users: dict[str, str] | None = No
         campaign=nd.get("campaign"),
         utm=nd.get("utm"),
         mgr=mgr,
+        phone=phone,
+        client_type=custom.get("client_type") or None,
+        refuse_reason=custom.get("refuse_reason") or "",
+        custom=custom or None,
         status_label=str(stage or "—"),
-        status_class=_stage_class(stage),
+        status_class=_stage_class(stage, semantic),
         stage=stage,
         amount=int(nd.get("amount") or 0),
         first_contact="—",
@@ -170,25 +188,46 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
 
     sources: dict[str, dict] = {}
 
+    # Сопоставление пользовательских полей Битрикс (со страницы «Интеграции»).
+    from app.services.integrations_config import get_field_map
+    field_map = await get_field_map(session)
+    extra_fields = field_map.get("fields") or {}
+
     # 1. Сделки Битрикс24 (за окно дашборда — иначе выгружается вся история портала).
     users: dict[str, str] = {}
+    stages: dict[str, str] = {}
+    phones: dict[str, str] = {}
     if settings.bitrix24_webhook_url:
         since = (datetime.now(UTC) - timedelta(days=_DEALS_WINDOW_DAYS)).strftime(
             "%Y-%m-%dT00:00:00+03:00"
         )
         deals = await _fetch_source(
             sources, "bitrix24", "Битрикс24",
-            lambda: factory.get_bitrix24().fetch_deals(created_after=since),
+            lambda: factory.get_bitrix24().fetch_deals(
+                created_after=since, extra_fields=extra_fields),
             progress, f"Битрикс24: загрузка сделок за {_DEALS_WINDOW_DAYS} дней…",
         )
-        # Справочник сотрудников для отображения имён ответственных (не критично).
+        # Справочники сотрудников и стадий (имена/этапы) — не критично для пересчёта.
         if sources["bitrix24"]["status"] == "ok":
             if progress:
-                await progress("Битрикс24: справочник сотрудников…")
+                await progress("Битрикс24: справочники сотрудников и стадий…")
             try:
                 users = {u["id"]: u["name"] for u in factory.get_bitrix24().fetch_users()}
             except Exception as exc:  # noqa: BLE001 — имена необязательны
                 logger.warning("Битрикс24: справочник сотрудников недоступен: %s", exc)
+            try:
+                stages = {s["id"]: s["name"] for s in factory.get_bitrix24().fetch_stages()}
+            except Exception as exc:  # noqa: BLE001 — названия стадий необязательны
+                logger.warning("Битрикс24: справочник стадий недоступен: %s", exc)
+            # Телефоны берём у контактов сделок (в самой сделке телефона нет).
+            try:
+                contact_ids = [str(d.get("contact_id")) for d in deals if d.get("contact_id")]
+                if contact_ids:
+                    if progress:
+                        await progress("Битрикс24: телефоны контактов…")
+                    phones = factory.get_bitrix24().fetch_contact_phones(contact_ids)
+            except Exception as exc:  # noqa: BLE001 — телефоны необязательны
+                logger.warning("Битрикс24: телефоны контактов недоступны: %s", exc)
     else:
         deals = []
         sources["bitrix24"] = {"status": "skipped"}
@@ -234,7 +273,7 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     await data_mode.clear_no_source_tables(session)
 
     for i, nd in enumerate(deals):
-        session.add(_deal_from_bitrix(i, nd, users))
+        session.add(_deal_from_bitrix(i, nd, users, stages, phones))
 
     for i, ch in enumerate(channels):
         channel = Channel(

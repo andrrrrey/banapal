@@ -26,10 +26,23 @@ export interface IntegrationProvider {
   fields: IntegrationField[];
 }
 
+export interface FieldTarget { key: string; label: string; hint: string; }
+export interface FieldMap { fields: Record<string, string>; required: string[]; }
+export interface BitrixField { code: string; title: string; }
+export interface BitrixStage { id: string; name: string; }
+export interface BitrixSchema {
+  ok: boolean;
+  error?: string;
+  fields: BitrixField[];
+  stages: BitrixStage[];
+}
+
 export interface IntegrationsConfig {
   data_source: DataSource;
   ai_configured: boolean;
   providers: IntegrationProvider[];
+  field_map: FieldMap;
+  field_targets: FieldTarget[];
 }
 
 export type RecomputeState = "idle" | "running" | "done" | "error";
@@ -125,6 +138,26 @@ export function useRecomputeStatus() {
     queryKey: ["integrations", "recompute", "status"],
     queryFn: () => api.get("/integrations/recompute/status"),
     refetchInterval: (q) => (q.state.data?.state === "running" ? 1500 : false),
+  });
+}
+
+// Живая схема воронки Битрикс24 (поля сделки + стадии) — по кнопке.
+export function useBitrixSchema() {
+  return useMutation({
+    mutationFn: () => api.get<BitrixSchema>("/integrations/bitrix/schema"),
+  });
+}
+
+// Сохранение сопоставления пользовательских полей Битрикс24.
+export function useSaveFieldMap() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: FieldMap) => api.put<FieldMap>("/integrations/field-map", p),
+    onSuccess: (data) => {
+      qc.setQueryData<IntegrationsConfig | undefined>(["integrations"], (prev) =>
+        prev ? { ...prev, field_map: data } : prev,
+      );
+    },
   });
 }
 

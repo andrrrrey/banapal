@@ -1,5 +1,5 @@
 import { App, Button, Spin } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { useCreateTask, useMonitorStats, useReview, useViolations } from "@/api/monitor";
@@ -27,6 +27,14 @@ export default function MonitorPage() {
   const createTask = useCreateTask();
   const { message } = App.useApp();
   const [done, setDone] = useState<Set<string>>(new Set());
+
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(0);
+  const total = violations.data?.length ?? 0;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  // Сброс страницы при смене фильтра или объёма данных.
+  useEffect(() => { setPage(0); }, [filter, total]);
+  const pageRows = violations.data?.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE) ?? [];
 
   const clearFilter = () => setParams({});
 
@@ -80,10 +88,10 @@ export default function MonitorPage() {
             <div className="empty-note">
               Оценочные нарушения этого типа показаны в блоке «Требует решения руководителя» ниже.
             </div>
-          ) : violations.data && violations.data.length ? (
-            violations.data.map((v, i) => (
+          ) : total ? (
+            pageRows.map((v, i) => (
               <ViolationRow
-                key={i}
+                key={page * PAGE_SIZE + i}
                 v={v}
                 onTask={onTask}
                 taskPending={createTask.isPending}
@@ -94,6 +102,19 @@ export default function MonitorPage() {
             <div className="empty-note">Нет нарушений этого типа</div>
           )}
         </div>
+        {total > PAGE_SIZE ? (
+          <div className="pager">
+            <Button size="small" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+              ← Назад
+            </Button>
+            <span className="pager-info">
+              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} из {total}
+            </span>
+            <Button size="small" disabled={page >= pages - 1} onClick={() => setPage((p) => p + 1)}>
+              Вперёд →
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {showReviewCard ? (

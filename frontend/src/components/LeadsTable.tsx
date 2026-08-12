@@ -43,7 +43,7 @@ export function LeadsTable({ rows }: { rows: Lead[] }) {
         <table className="mtable">
           <thead>
             <tr>
-              <th>Клиент</th><th>Приоритет</th><th>Источник</th><th>Менеджер</th><th>Статус</th>
+              <th className="cell-client">Клиент</th><th>Приоритет</th><th>Источник</th><th>Менеджер</th><th>Статус</th>
               <th>1-й контакт</th><th>Звонок</th><th>Счёт</th><th>Оплата</th><th>Сумма</th><th>Комментарий AI</th>
             </tr>
           </thead>
@@ -51,7 +51,7 @@ export function LeadsTable({ rows }: { rows: Lead[] }) {
             {rows.length ? (
               rows.map((l, i) => (
                 <tr key={i} className={`click rk-row-${l.risk ?? "none"}`}>
-                  <td style={{ fontWeight: 600 }}>{l.name}</td>
+                  <td className="cell-client" style={{ fontWeight: 600 }} title={l.name}>{l.name}</td>
                   <td><PriorityCell lead={l} /></td>
                   <td><span className="tag t-gray">{l.src}</span></td>
                   <td>
