@@ -244,7 +244,8 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
         sources["yandex_direct"] = {"status": "skipped"}
 
     # 3. Номенклатура МойСклад (себестоимость/бренды).
-    if settings.moysklad_token:
+    # Источник настроен, если задан DSN реплики mpdb ИЛИ токен API (резерв).
+    if (settings.moysklad_pg_dsn or "").strip() or settings.moysklad_token:
         products = await _fetch_source(
             sources, "moysklad", "МойСклад",
             lambda: factory.get_moysklad().fetch_products(),

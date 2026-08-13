@@ -33,23 +33,36 @@ const PROVIDER_NAMES: Record<string, string> = {
 function SourcesSummary({ sources }: { sources: RecomputeStatus["sources"] }) {
   const entries = Object.entries(sources ?? {});
   if (entries.length === 0) return null;
+  // Причины ошибок показываем отдельной строкой (не только в подсказке при наведении).
+  const errors = entries.filter(([, s]) => s.status === "error" && s.message);
   return (
-    <div className="intg-src-summary">
-      {entries.map(([key, s]) => {
-        const cls = s.status === "ok" ? "ok" : s.status === "error" ? "err" : "idle";
-        const label =
-          s.status === "ok"
-            ? `${PROVIDER_NAMES[key] ?? key}: ${s.count ?? "готово"}`
-            : s.status === "skipped"
-              ? `${PROVIDER_NAMES[key] ?? key}: не настроен`
-              : `${PROVIDER_NAMES[key] ?? key}: ошибка`;
-        return (
-          <span key={key} className={`intg-src-chip ${cls}`} title={s.message ?? ""}>
-            {label}
-          </span>
-        );
-      })}
-    </div>
+    <>
+      <div className="intg-src-summary">
+        {entries.map(([key, s]) => {
+          const cls = s.status === "ok" ? "ok" : s.status === "error" ? "err" : "idle";
+          const label =
+            s.status === "ok"
+              ? `${PROVIDER_NAMES[key] ?? key}: ${s.count ?? "готово"}`
+              : s.status === "skipped"
+                ? `${PROVIDER_NAMES[key] ?? key}: не настроен`
+                : `${PROVIDER_NAMES[key] ?? key}: ошибка`;
+          return (
+            <span key={key} className={`intg-src-chip ${cls}`} title={s.message ?? ""}>
+              {label}
+            </span>
+          );
+        })}
+      </div>
+      {errors.length > 0 ? (
+        <div className="intg-src-errors">
+          {errors.map(([key, s]) => (
+            <div key={key} className="intg-src-error">
+              <b>{PROVIDER_NAMES[key] ?? key}:</b> {s.message}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }
 
