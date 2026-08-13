@@ -118,12 +118,13 @@ async def attention(session: AsyncSession) -> dict:
     res = await vio.evaluate_current(session)
     regular = res["regular"]
     review = res["review"]
-    money_at_risk = vio.money_at_risk(regular)
+    cap = await vio.risk_amount_cap(session)
+    money_at_risk = vio.money_at_risk(regular, cap)
     risk_leads = (await session.execute(
         select(Deal).where(Deal.risk.is_not(None), Deal.on_dashboard.is_(True))
     )).scalars().all()
 
-    # Реальные счётчики и суммы по типам нарушений (сумма — с дедупом по сделке).
+    # Реальные счётчики и суммы по типам нарушений (сумма — с дедупом и фильтром выбросов).
     def _count(ptype: str) -> int:
         return sum(1 for v in regular if v.get("ptype") == ptype)
 
@@ -131,7 +132,10 @@ async def attention(session: AsyncSession) -> dict:
         by_deal: dict[str, int] = {}
         for v in regular:
             if v.get("ptype") == ptype and v.get("severity") == "over":
-                by_deal[str(v.get("ref") or v.get("name"))] = int(v.get("amount") or 0)
+                amount = int(v.get("amount") or 0)
+                if cap and amount > cap:
+                    continue
+                by_deal[str(v.get("ref") or v.get("name"))] = amount
         return sum(by_deal.values())
 
     # Число источников с ошибкой/пропуском в последнем пересчёте.

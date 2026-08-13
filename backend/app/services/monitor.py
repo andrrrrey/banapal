@@ -29,7 +29,7 @@ async def stats(session: AsyncSession) -> dict:
     review = res["review"]
     over = [v for v in regular if v["severity"] == "over"]
     warn = [v for v in regular if v["severity"] == "warn"]
-    money = vio.money_at_risk(regular)
+    money = vio.money_at_risk(regular, await vio.risk_amount_cap(session))
 
     # «В норме» — доля сделок без нарушений (движок выдаёт не более одного
     # нарушения на сделку, поэтому len(regular) ≈ число проблемных сделок).
