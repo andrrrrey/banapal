@@ -113,27 +113,53 @@ async def romi_by_channel(session: AsyncSession) -> list[dict]:
 
 async def attention(session: AsyncSession) -> dict:
     from app.services import violations as vio
+    from app.services.integrations_config import get_recompute_status
 
     res = await vio.evaluate_current(session)
-    money_at_risk = vio.money_at_risk(res["regular"])
+    regular = res["regular"]
+    review = res["review"]
+    money_at_risk = vio.money_at_risk(regular)
     risk_leads = (await session.execute(
         select(Deal).where(Deal.risk.is_not(None), Deal.on_dashboard.is_(True))
     )).scalars().all()
 
+    # Реальные счётчики и суммы по типам нарушений (сумма — с дедупом по сделке).
+    def _count(ptype: str) -> int:
+        return sum(1 for v in regular if v.get("ptype") == ptype)
+
+    def _money(ptype: str) -> int:
+        by_deal: dict[str, int] = {}
+        for v in regular:
+            if v.get("ptype") == ptype and v.get("severity") == "over":
+                by_deal[str(v.get("ref") or v.get("name"))] = int(v.get("amount") or 0)
+        return sum(by_deal.values())
+
+    # Число источников с ошибкой/пропуском в последнем пересчёте.
+    rc = await get_recompute_status(session)
+    src_errors = sum(1 for s in (rc.get("sources") or {}).values()
+                     if s.get("status") in ("error", "skipped"))
+
     tiles = [
-        {"n": 1, "label": "Просроченные лиды", "sub": "первый контакт > норматива",
+        {"n": _count("overdue_contact"), "label": "Просроченные лиды",
+         "sub": "первый контакт > норматива",
          "cls": "red", "icon": "clock", "drill": "monitor:overdue_contact"},
-        {"n": 1, "label": "Сделки без задач", "sub": f"{f.money(145000)} под риском",
+        {"n": _count("no_task"), "label": "Сделки без задач",
+         "sub": f"{f.money(_money('no_task'))} под риском",
          "cls": "amber", "icon": "task", "drill": "monitor:no_task"},
-        {"n": 1, "label": "Сделки без движения", "sub": f"{f.money(96000)} под риском",
+        {"n": _count("stuck"), "label": "Сделки без движения",
+         "sub": f"{f.money(_money('stuck'))} под риском",
          "cls": "red", "icon": "freeze", "drill": "monitor:stuck"},
-        {"n": 1, "label": "Без повторного касания", "sub": f"{f.money(74000)} под риском",
+        {"n": _count("no_recontact"), "label": "Без повторного касания",
+         "sub": f"{f.money(_money('no_recontact'))} под риском",
          "cls": "amber", "icon": "touch", "drill": "monitor:no_recontact"},
-        {"n": 2, "label": "Отказы / спам на проверке", "sub": "оценочные нарушения",
+        {"n": len(review), "label": "Отказы / спам на проверке",
+         "sub": "оценочные нарушения",
          "cls": "violet", "icon": "flag", "drill": "monitor:spam"},
-        {"n": 2, "label": "Кампании ниже цели ROMI", "sub": "Look-alike · Конкуренты",
-         "cls": "amber", "icon": "romi", "drill": "analytics"},
-        {"n": 1, "label": "Ошибки источников данных", "sub": "нет данных о расходе",
+        {"n": _count("fields"), "label": "Не заполнены поля",
+         "sub": "обязательные поля сделки",
+         "cls": "amber", "icon": "romi", "drill": "monitor:fields"},
+        {"n": src_errors, "label": "Ошибки источников данных",
+         "sub": "проверьте интеграции",
          "cls": "gray", "icon": "plug", "drill": "data"},
     ]
     return {
