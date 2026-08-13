@@ -20,17 +20,24 @@ REPORTS_URL = "https://api.direct.yandex.com/json/v5/reports"
 
 
 def parse_tsv(text: str, fields: list[str]) -> list[dict]:
-    """Разбирает TSV-отчёт (первая строка — заголовки колонок)."""
+    """Разбирает TSV-отчёт (первая строка — заголовки колонок).
+
+    Пустой/вырожденный отчёт (например, все кампании на паузе, нет статистики)
+    даёт пустой список, а не падение: если в заголовке нет запрошенных полей —
+    возвращаем [] сразу.
+    """
     rows: list[dict] = []
     reader = io.StringIO(text)
     header = reader.readline().rstrip("\n").split("\t")
     idx = {name: header.index(name) for name in fields if name in header}
+    if not idx:
+        return []
     for line in reader:
         line = line.rstrip("\n")
         if not line:
             continue
         cols = line.split("\t")
-        rows.append({name: cols[i] for name, i in idx.items()})
+        rows.append({name: cols[i] for name, i in idx.items() if i < len(cols)})
     return rows
 
 
@@ -95,11 +102,11 @@ class RealYandexDirectAdapter:
         }}
         rows = _report(body, fields)
         return [{
-            "campaign": r["CampaignName"],
+            "campaign": r.get("CampaignName", ""),
             "spend_gross": int(float(r.get("Cost", 0) or 0)),
             "clicks": int(float(r.get("Clicks", 0) or 0)),
             "impressions": int(float(r.get("Impressions", 0) or 0)),
-        } for r in rows]
+        } for r in rows if r.get("CampaignName")]
 
     def fetch_search_queries(self) -> list[dict]:
         fields = ["Query", "CampaignName", "Cost", "Clicks", "Conversions"]
@@ -115,9 +122,9 @@ class RealYandexDirectAdapter:
         }}
         rows = _report(body, fields)
         return [{
-            "phrase": r["Query"],
+            "phrase": r.get("Query", ""),
             "camp": r.get("CampaignName", ""),
             "spend": int(float(r.get("Cost", 0) or 0)),
             "clicks": int(float(r.get("Clicks", 0) or 0)),
             "conv": int(float(r.get("Conversions", 0) or 0)),
-        } for r in rows]
+        } for r in rows if r.get("Query")]
