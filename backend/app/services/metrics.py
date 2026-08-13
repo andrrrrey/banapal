@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.models import Baseline, Channel, Deal, KpiCard, ManagerControl
 from app.services import format as f
 from app.services import period as per
+from app.services import romi as romi_svc
 
 
 async def _baselines(session: AsyncSession) -> dict[str, float]:
@@ -28,12 +29,24 @@ async def kpis(session: AsyncSession, period: str) -> list[dict]:
     # В боевом режиме демо-дельты и спарклайны из сида не показываем — только
     # реальные значения (тренд формируется на этапе накопления истории).
     real = settings.data_source == "real"
+    # Каналы нужны для реального ROMI (карта с static_value в прототипе — «+197%»).
+    channels_rows = (
+        (await session.execute(select(Channel))).scalars().all() if real else []
+    )
 
     out: list[dict] = []
     for c in cards:
         value: float | None = None
         if c.static_value is not None:
-            display = c.static_value
+            if real:
+                # Не показываем демо-строку: считаем ROMI из каналов, иначе «—».
+                r = romi_svc.romi(
+                    sum(ch.margin for ch in channels_rows),
+                    sum(ch.spend for ch in channels_rows),
+                ) if c.key == "romi" else None
+                display = f"{r:+d}%" if r is not None else "—"
+            else:
+                display = c.static_value
         else:
             raw = (base.get(c.base_key or "", 0)) * (m if c.scales else 1)
             value = raw
@@ -95,9 +108,17 @@ async def revenue_series(session: AsyncSession, period: str) -> dict:
     base = await _baselines(session)
     days = ["09", "11", "13", "15", "17"] if per.norm_period(period) == "today" \
         else ["1", "5", "10", "15", "20", "25", "30"]
-    per_day = base.get("revenue", 0) * m / len(days)
-    revenue = [round(per_day * (0.7 + i * 0.09)) for i in range(len(days))]
-    margin = [round(v * 0.34) for v in revenue]
+    total_rev = base.get("revenue", 0) * m
+    total_margin = base.get("margin", 0) * m
+    if settings.data_source == "real":
+        # Посуточной истории пока нет — показываем ровное распределение реального
+        # итога, без придуманной кривой роста и синтетической маржи (как в демо).
+        revenue = [round(total_rev / len(days))] * len(days)
+        margin = [round(total_margin / len(days))] * len(days)
+    else:
+        per_day = total_rev / len(days)
+        revenue = [round(per_day * (0.7 + i * 0.09)) for i in range(len(days))]
+        margin = [round(v * 0.34) for v in revenue]
     return {"days": days, "revenue": revenue, "margin": margin}
 
 

@@ -142,15 +142,20 @@ def aggregate_channels(
 
 
 def baseline_from(channels: list[dict], deals: list[dict]) -> dict[str, float]:
-    """Базовые KPI из витрины каналов и сделок."""
+    """Базовые KPI из витрины каналов и сделок.
+
+    Выручка и «оплаты» берутся из выигранных сделок Битрикс (семантика стадии S —
+    успех), а не из рекламной атрибуции: так «Выручка» на дашборде отражает реальные
+    закрытые сделки, даже когда рекламные каналы не подключены."""
+    won = [d for d in deals if d.get("semantic") == "S"]
     return {
         "leads": float(len(deals)),
         "qual": float(sum(1 for d in deals if d.get("stage") not in (None, "Новое обращение"))),
         "deals": float(sum(1 for d in deals if d.get("amount", 0) > 0)),
         "invoices": float(sum(1 for d in deals if d.get("invoice"))),
-        "payments": float(sum(1 for d in deals if d.get("paid"))),
-        "revenue": float(sum(c["revenue"] for c in channels)),
-        "margin": float(sum(c["margin"] for c in channels)),
+        "payments": float(len(won)),  # оплаты ≈ выигранные сделки
+        "revenue": float(sum(int(d.get("amount") or 0) for d in won)),
+        "margin": float(sum(c["margin"] for c in channels)),  # маржа — из атрибуции каналов
         "spend": float(sum(c["spend"] or 0 for c in channels)),
         "first_contact": 0.0,
         "overdue": 0.0,
