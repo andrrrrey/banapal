@@ -32,9 +32,18 @@ export default function MonitorPage() {
   const [page, setPage] = useState(0);
   const total = violations.data?.length ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  // Сброс страницы при смене фильтра или объёма данных.
-  useEffect(() => { setPage(0); }, [filter, total]);
   const pageRows = violations.data?.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE) ?? [];
+
+  // Пагинация списка «Требует решения руководителя» (оценочные — их много).
+  const [reviewPage, setReviewPage] = useState(0);
+  const reviewTotal = review.data?.length ?? 0;
+  const reviewPages = Math.max(1, Math.ceil(reviewTotal / PAGE_SIZE));
+  const reviewRows = review.data?.slice(
+    reviewPage * PAGE_SIZE, reviewPage * PAGE_SIZE + PAGE_SIZE) ?? [];
+
+  // Сброс страниц при смене фильтра или объёма данных.
+  useEffect(() => { setPage(0); }, [filter, total]);
+  useEffect(() => { setReviewPage(0); }, [filter, reviewTotal]);
 
   const clearFilter = () => setParams({});
 
@@ -124,10 +133,28 @@ export default function MonitorPage() {
             <span className="sub">оценочные нарушения — автоклассификации не поддаются</span>
           </div>
           <div className="deal-list">
-            {review.data?.map((v, i) => (
-              <ReviewRow key={i} v={v} />
-            ))}
+            {reviewTotal ? (
+              reviewRows.map((v, i) => <ReviewRow key={reviewPage * PAGE_SIZE + i} v={v} />)
+            ) : (
+              <div className="empty-note">Нет оценочных нарушений на проверке</div>
+            )}
           </div>
+          {reviewTotal > PAGE_SIZE ? (
+            <div className="pager">
+              <Button size="small" disabled={reviewPage === 0}
+                onClick={() => setReviewPage((p) => p - 1)}>
+                ← Назад
+              </Button>
+              <span className="pager-info">
+                {reviewPage * PAGE_SIZE + 1}–{Math.min((reviewPage + 1) * PAGE_SIZE, reviewTotal)} из{" "}
+                {reviewTotal}
+              </span>
+              <Button size="small" disabled={reviewPage >= reviewPages - 1}
+                onClick={() => setReviewPage((p) => p + 1)}>
+                Вперёд →
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </>
