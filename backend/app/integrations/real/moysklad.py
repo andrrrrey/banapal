@@ -178,14 +178,26 @@ class FallbackMoyskladAdapter:
         self.secondary = secondary or RealMoyskladAdapter()
 
     def _with_fallback(self, method: str) -> list[dict]:
+        # Резерв (API) доступен только при заданном токене. Если его нет — не идём в
+        # API (иначе получим бесполезное «Illegal header value b'Bearer '»), а
+        # показываем реальную причину сбоя реплики.
+        has_api = bool((settings.moysklad_token or "").strip())
         try:
             rows = getattr(self.primary, method)()
-            if rows:
-                return rows
+        except Exception as exc:  # noqa: BLE001 — проблема с БД
+            if has_api:
+                logger.warning("МойСклад-реплика недоступна (%s): %s → резерв (API)", method, exc)
+                return getattr(self.secondary, method)()
+            logger.warning("МойСклад-реплика недоступна (%s): %s (резерв API не настроен)",
+                           method, exc)
+            raise  # без резерва — пробрасываем настоящую ошибку реплики наружу
+        if rows:
+            return rows
+        # Реплика ответила пусто.
+        if has_api:
             logger.info("МойСклад-реплика: %s вернул 0 строк → резерв (API)", method)
-        except Exception as exc:  # noqa: BLE001 — любая проблема с БД → идём в API
-            logger.warning("МойСклад-реплика недоступна (%s): %s → резерв (API)", method, exc)
-        return getattr(self.secondary, method)()
+            return getattr(self.secondary, method)()
+        return rows  # пусто и резерва нет — это не ошибка
 
     def fetch_products(self) -> list[dict]:
         return self._with_fallback("fetch_products")
