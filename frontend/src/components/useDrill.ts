@@ -13,7 +13,7 @@ export function useDrill() {
     if (drill.startsWith("monitor:")) nav(`/monitor?ptype=${drill.split(":")[1]}`);
     else if (drill === "analytics") nav("/analytics");
     else if (drill === "romi") nav("/romi");
-    // "data" — диагностика источников (демо), без перехода
+    else if (drill === "data") nav("/integrations");
   };
 
   const toManager = (name: string) => {

@@ -24,4 +24,16 @@ async def evaluate_current(session: AsyncSession) -> dict:
 
 
 def money_at_risk(regular: list[dict]) -> int:
-    return sum(v["amount"] for v in regular if v["severity"] == "over")
+    """Сумма сделок «под риском» — каждая сделка учитывается один раз.
+
+    У одной сделки может быть несколько нарушений (нет задачи + нет движения + …);
+    без дедупликации её сумма складывалась бы кратно числу нарушений, завышая итог.
+    Ключ дедупа — ссылка на сделку (ref); при её отсутствии — имя из нарушения.
+    """
+    by_deal: dict[str, int] = {}
+    for v in regular:
+        if v.get("severity") != "over":
+            continue
+        key = v.get("ref") or v.get("name") or id(v)
+        by_deal[str(key)] = int(v.get("amount") or 0)
+    return sum(by_deal.values())
