@@ -38,4 +38,9 @@ def get_calltouch() -> CalltouchAdapter:
 
 
 def get_moysklad() -> MoyskladAdapter:
-    return real.RealMoyskladAdapter() if _is_real() else mock.MockMoyskladAdapter()
+    if not _is_real():
+        return mock.MockMoyskladAdapter()
+    # Если задан DSN реплики `mpdb` — первичный источник БД, резерв — API МойСклад.
+    if (settings.moysklad_pg_dsn or "").strip():
+        return real.FallbackMoyskladAdapter()
+    return real.RealMoyskladAdapter()

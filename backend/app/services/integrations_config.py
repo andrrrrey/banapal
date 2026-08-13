@@ -131,9 +131,20 @@ PROVIDERS: list[Provider] = [
         docs="Профиль сотрудника → «Токен доступа» (право видеть себестоимость)",
         fields=[
             Field(
+                "moysklad_pg_dsn",
+                "DSN реплики (mpdb)",
+                "Первичный источник — Postgres-реплика МойСклад заказчика; API ниже "
+                "используется как резерв. Формат: "
+                "postgresql://user:pass@host:5432/mpdb?sslmode=require. "
+                "Оставьте пустым, чтобы брать данные только из API.",
+                secret=True,
+                placeholder="postgresql://user:pass@host:5432/mpdb",
+            ),
+            Field(
                 "moysklad_token",
                 "Токен сотрудника",
-                "С правом «Видеть себестоимость, цену закупки и прибыль товаров».",
+                "С правом «Видеть себестоимость, цену закупки и прибыль товаров». "
+                "Используется как резерв, если данных нет в реплике.",
                 secret=True,
             ),
         ],
@@ -333,8 +344,10 @@ async def get_config(session: AsyncSession) -> dict:
     for p in PROVIDERS:
         fields_out: list[dict] = []
         filled_count = 0
-        required = [f for f in p.fields if f.key != "yandex_direct_login"
-                    and f.key != "bitrix24_inbound_token"]
+        # Необязательные поля (не влияют на признак «настроено»): доп. логин Директа,
+        # токен исходящих Битрикс, DSN реплики МойСклад (ускоритель поверх API).
+        _optional = {"yandex_direct_login", "bitrix24_inbound_token", "moysklad_pg_dsn"}
+        required = [f for f in p.fields if f.key not in _optional]
         for f in p.fields:
             raw = _current_value(overrides, f.key)
             is_filled = bool(raw)
