@@ -90,35 +90,47 @@ class RealMoyskladAdapter:
 #
 # Заказчик реплицирует ключевые данные МойСклад в свою БД Postgres. По его просьбе
 # первичный источник — эта БД, а API МойСклад — резерв (см. FallbackMoyskladAdapter).
-#
-# ВАЖНО: имена таблиц/колонок ниже — ЗАГЛУШКИ. После получения структуры `mpdb`
-# от заказчика замените их на реальные (это единственное место правки). Запросы
-# должны вернуть колонки ровно с этими алиасами — тогда остальной код не меняется:
+# Запросы возвращают колонки с фиксированными алиасами — остальной код не меняется:
 #   • номенклатура → external_id, name, brand, cost_price (руб.)
 #   • прибыльность → name, profit (руб.), cost (руб.)
-# Если таблицы/вьюхи ещё нет или запрос падает — адаптер бросает исключение, и
+# Таблицы реплики (по интроспекции information_schema, 2026-08):
+#   ms_products — номенклатура (id, name, path_name, buy_price_value, archived)
+#   ms_demands  — отгрузки/продажи (product_id, quantity, price, sum, applicable)
+#
+# ДОПУЩЕНИЯ (подтвердить на реальных данных, при расхождении — поправить здесь):
+#   1) Денежные поля хранятся в КОПЕЙКАХ (как в API МойСклад) → делим на 100.
+#   2) «Бренд» = path_name (путь папки/группы товара). Если бренды размечены иначе
+#      (атрибут) — заменить источник колонки brand.
+#   3) Прибыль считается как выручка − (кол-во × закупочная цена). Это ПРИБЛИЖЕНИЕ,
+#      а не FIFO-себестоимость отчёта МойСклад. Для точного совпадения с отчётом МС
+#      заказчик может отдать готовую вьюху прибыльности — тогда _SQL_PROFIT сведётся
+#      к «SELECT name, profit, cost FROM <вьюха>».
+# Если запрос падает (нет таблицы/прав) — адаптер бросает исключение, и
 # FallbackMoyskladAdapter уходит в API МойСклад. Это безопасно by design.
 # ────────────────────────────────────────────────────────────────────────────
 
-# TODO(schema): заменить на реальные имена таблиц/колонок из mpdb.
 _SQL_PRODUCTS = """
     SELECT
-        id::text        AS external_id,
-        name            AS name,
-        folder_name     AS brand,
-        buy_price_rub   AS cost_price
-    FROM products
+        id                                    AS external_id,
+        name                                  AS name,
+        NULLIF(path_name, '')                 AS brand,
+        COALESCE(buy_price_value, 0) / 100.0  AS cost_price
+    FROM ms_products
+    WHERE archived IS NOT TRUE
 """
 
-# TODO(schema): заменить на реальную вьюху/таблицу отчёта прибыльности.
-# Если заказчик не сделает готовый отчёт — здесь считаем прибыль сами из продаж:
-#   SUM(qty * (sell_price_rub - cost_price_rub)) ... GROUP BY name
+# Прибыль по товарам из отгрузок: выручка (кол-во×цена позиции) минус закупочная
+# стоимость (кол-во×buy_price_value). Только проведённые отгрузки (applicable).
 _SQL_PROFIT = """
     SELECT
-        name            AS name,
-        profit_rub      AS profit,
-        cost_rub        AS cost
-    FROM profit_report
+        p.name AS name,
+        (SUM(d.quantity * d.price)
+            - SUM(d.quantity * COALESCE(p.buy_price_value, 0))) / 100.0 AS profit,
+        SUM(d.quantity * COALESCE(p.buy_price_value, 0)) / 100.0        AS cost
+    FROM ms_demands d
+    JOIN ms_products p ON p.id = d.product_id
+    WHERE d.applicable IS TRUE
+    GROUP BY p.name
 """
 
 
