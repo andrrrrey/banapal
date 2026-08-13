@@ -473,3 +473,8 @@ tr.rk-row-mid td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 .mpdb-col { display: inline-flex; align-items: baseline; gap: 5px; padding: 2px 8px; border-radius: 6px; background: var(--line); font-size: 12px; }
 .mpdb-col b { font-weight: 600; }
 .mpdb-col i { font-style: normal; color: var(--muted); font-size: 11px; }
+
+/* Причины ошибок источников в плашке пересчёта */
+.intg-src-errors { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.intg-src-error { font-size: 12px; color: var(--danger, #c0392b); line-height: 1.4; }
+.intg-src-error b { font-weight: 600; }

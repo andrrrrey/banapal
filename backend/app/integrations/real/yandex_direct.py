@@ -34,6 +34,28 @@ def parse_tsv(text: str, fields: list[str]) -> list[dict]:
     return rows
 
 
+def _error_detail(resp: httpx.Response) -> str:
+    """Извлекает человекочитаемый текст ошибки из ответа Reports API.
+
+    Директ возвращает ошибку в JSON `{"error": {...}}`; при отсутствии — берём
+    краткий фрагмент тела. Так в статусе пересчёта видно реальную причину, а не
+    просто «400 Bad Request»."""
+    try:
+        err = resp.json().get("error", {})
+        parts = [
+            str(err.get("error_string") or "").strip(),
+            str(err.get("error_detail") or "").strip(),
+        ]
+        text = " — ".join(p for p in parts if p)
+        code = err.get("error_code")
+        if text:
+            return f"{text} (код {code})" if code else text
+    except ValueError:
+        pass
+    snippet = (resp.text or "").strip().replace("\n", " ")[:200]
+    return snippet or f"HTTP {resp.status_code}"
+
+
 def _report(body: dict, fields: list[str]) -> list[dict]:
     headers = {
         "Authorization": f"Bearer {settings.yandex_oauth_token}",
@@ -48,12 +70,13 @@ def _report(body: dict, fields: list[str]) -> list[dict]:
     with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
         for _ in range(6):  # отчёт может готовиться (201/202)
             resp = client.post(REPORTS_URL, headers=headers, json=body)
-            if resp.status_code in (200,):
+            if resp.status_code == 200:
                 return parse_tsv(resp.text, fields)
             if resp.status_code in (201, 202):
                 time.sleep(min(int(resp.headers.get("retryIn", 5)), 15))
                 continue
-            resp.raise_for_status()
+            # Любой другой код — ошибка API: пробрасываем текст Яндекса наружу.
+            raise RuntimeError(f"Яндекс Директ: {_error_detail(resp)}")
     raise RuntimeError("Отчёт Яндекс Директа не готов после нескольких попыток")
 
 
