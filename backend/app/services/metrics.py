@@ -2,13 +2,88 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models import Baseline, Channel, Deal, KpiCard, ManagerControl
 from app.services import format as f
 from app.services import period as per
+from app.services import romi as romi_svc
+
+# Длительность периодов (дней) для реальной фильтрации по датам.
+_PERIOD_DAYS = {"today": 1, "7": 7, "30": 30, "quarter": 90}
+
+
+def _period_start(period: str | None, now: datetime) -> datetime:
+    p = per.norm_period(period)
+    if p == "today":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return now - timedelta(days=_PERIOD_DAYS[p])
+
+
+def _num(value: object) -> float:
+    """Терпимый парс числа (себестоимость из пользовательского поля может быть строкой)."""
+    if value is None:
+        return 0.0
+    try:
+        return float(str(value).replace(" ", "").replace("\xa0", "").replace(",", "."))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def _period_baseline(session: AsyncSession, period: str) -> dict[str, float]:
+    """Реальные KPI за период — по сделкам с created_at в интервале (боевой режим).
+
+    Выигранные сделки определяются по status_class == 'st-ok' (семантика успеха).
+    Маржа считается только если сопоставлено поле себестоимости (иначе 0)."""
+    start = _period_start(period, datetime.now(UTC))
+    rows = (await session.execute(
+        select(Deal).where(
+            Deal.on_dashboard.is_(True),
+            Deal.created_at.is_not(None),
+            Deal.created_at >= start,
+        )
+    )).scalars().all()
+    won = [d for d in rows if d.status_class == "st-ok"]
+    revenue = sum(int(d.amount or 0) for d in won)
+
+    # Маржа — только при сопоставленном поле себестоимости (страница «Интеграции»).
+    from app.services.integrations_config import get_field_map
+    fm = await get_field_map(session)
+    if "cost" in (fm.get("fields") or {}):
+        total_cost = sum(_num((d.custom or {}).get("cost")) for d in won)
+        margin = int(revenue - total_cost)
+    else:
+        margin = 0
+
+    # Расход — общий по каналам (посуточной атрибуции расхода нет).
+    spend = int((await session.execute(
+        select(func.coalesce(func.sum(Channel.spend), 0))
+    )).scalar() or 0)
+
+    return {
+        "leads": float(len(rows)),
+        "qual": float(sum(1 for d in rows if d.stage not in (None, "Новое обращение"))),
+        "deals": float(sum(1 for d in rows if (d.amount or 0) > 0)),
+        "invoices": float(sum(1 for d in rows if d.invoice)),
+        "payments": float(len(won)),
+        "revenue": float(revenue),
+        "margin": float(margin),
+        "spend": float(spend),
+        "first_contact": 0.0,
+        "overdue": 0.0,
+    }
+
+
+async def _base_and_mult(session: AsyncSession, period: str) -> tuple[dict[str, float], float]:
+    """Базлайн и множитель: боевой режим — реальная фильтрация по датам (mult=1),
+    демо — сохранённый сид × коэффициент периода (как в прототипе)."""
+    if settings.data_source == "real":
+        return await _period_baseline(session, period), 1.0
+    return await _baselines(session), per.mult(period)
 
 
 async def _baselines(session: AsyncSession) -> dict[str, float]:
@@ -22,18 +97,29 @@ def _minutes(value: float) -> str:
 
 
 async def kpis(session: AsyncSession, period: str) -> list[dict]:
-    m = per.mult(period)
-    base = await _baselines(session)
+    base, m = await _base_and_mult(session, period)
     cards = (await session.execute(select(KpiCard).order_by(KpiCard.position))).scalars().all()
     # В боевом режиме демо-дельты и спарклайны из сида не показываем — только
     # реальные значения (тренд формируется на этапе накопления истории).
     real = settings.data_source == "real"
+    # Каналы нужны для реального ROMI (карта с static_value в прототипе — «+197%»).
+    channels_rows = (
+        (await session.execute(select(Channel))).scalars().all() if real else []
+    )
 
     out: list[dict] = []
     for c in cards:
         value: float | None = None
         if c.static_value is not None:
-            display = c.static_value
+            if real:
+                # Не показываем демо-строку: считаем ROMI из каналов, иначе «—».
+                r = romi_svc.romi(
+                    sum(ch.margin for ch in channels_rows),
+                    sum(ch.spend for ch in channels_rows),
+                ) if c.key == "romi" else None
+                display = f"{r:+d}%" if r is not None else "—"
+            else:
+                display = c.static_value
         else:
             raw = (base.get(c.base_key or "", 0)) * (m if c.scales else 1)
             value = raw
@@ -73,8 +159,7 @@ async def filter_options(session: AsyncSession) -> dict:
 
 
 async def funnel(session: AsyncSession, period: str) -> list[dict]:
-    m = per.mult(period)
-    base = await _baselines(session)
+    base, m = await _base_and_mult(session, period)
     stages = [
         ("leads", "Лиды"), ("qual", "Квалификация"), ("deals", "Сделки"),
         ("invoices", "Счета"), ("payments", "Оплаты"),
@@ -91,13 +176,20 @@ async def sources(session: AsyncSession) -> list[dict]:
 
 
 async def revenue_series(session: AsyncSession, period: str) -> dict:
-    m = per.mult(period)
-    base = await _baselines(session)
+    base, m = await _base_and_mult(session, period)
     days = ["09", "11", "13", "15", "17"] if per.norm_period(period) == "today" \
         else ["1", "5", "10", "15", "20", "25", "30"]
-    per_day = base.get("revenue", 0) * m / len(days)
-    revenue = [round(per_day * (0.7 + i * 0.09)) for i in range(len(days))]
-    margin = [round(v * 0.34) for v in revenue]
+    total_rev = base.get("revenue", 0) * m
+    total_margin = base.get("margin", 0) * m
+    if settings.data_source == "real":
+        # Посуточной истории пока нет — показываем ровное распределение реального
+        # итога, без придуманной кривой роста и синтетической маржи (как в демо).
+        revenue = [round(total_rev / len(days))] * len(days)
+        margin = [round(total_margin / len(days))] * len(days)
+    else:
+        per_day = total_rev / len(days)
+        revenue = [round(per_day * (0.7 + i * 0.09)) for i in range(len(days))]
+        margin = [round(v * 0.34) for v in revenue]
     return {"days": days, "revenue": revenue, "margin": margin}
 
 

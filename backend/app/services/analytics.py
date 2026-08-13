@@ -7,10 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.models import Baseline, Channel, MinusWord
+from app.models import Channel, MinusWord
 from app.seeds.chain import CHAIN_STEPS
 from app.services import format as f
-from app.services import period as per
 
 
 def _digits(text: str) -> int:
@@ -23,8 +22,8 @@ def _has_num(text: str) -> bool:
 
 
 async def chain(session: AsyncSession, period: str) -> list[dict]:
-    m = per.mult(period)
-    base = {b.key: b.value for b in (await session.execute(select(Baseline))).scalars().all()}
+    from app.services import metrics
+    base, m = await metrics._base_and_mult(session, period)
     real = settings.data_source == "real"
 
     steps: list[dict] = []
