@@ -31,7 +31,9 @@ logger = get_logger("banapal.ingest")
 Progress = Callable[[str], Awaitable[None]]
 
 # Глубина выгрузки сделок Битрикс24 (совпадает с окном дашборда).
-_DEALS_WINDOW_DAYS = 30
+# Окно выгрузки сделок — покрывает максимальный период дашборда (квартал ≈ 90 дней),
+# чтобы фильтрация по датам работала для всех периодов, а не только для 30 дней.
+_DEALS_WINDOW_DAYS = 95
 
 
 def _parse_dt(value: str | None) -> datetime | None:
