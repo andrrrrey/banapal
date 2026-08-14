@@ -28,13 +28,15 @@ async def chain(session: AsyncSession, period: str) -> list[dict]:
 
     steps: list[dict] = []
     for s in CHAIN_STEPS:
-        if "static" in s:
-            # Клики/визиты требуют Яндекс Директ/Метрику. В боевом режиме без этих
-            # источников показываем «нет данных», а не демо-значение из прототипа.
-            display = "нет данных" if real else s["static"]
-        else:
+        if not real and "static" in s:
+            # Демо: статичные клики/визиты из прототипа.
+            display = s["static"]
+        elif "base_key" in s:
+            # Боевой режим: реальное значение (клики — Директ, визиты — Метрика).
             raw = base.get(s["base_key"], 0) * m
             display = f.money_short(raw) if s.get("kind") == "money" else f.fmt(raw)
+        else:
+            display = "нет данных"
         steps.append({
             "label": s["label"], "sub": s["sub"], "color": s["color"],
             "width": s["width"], "glow": s.get("glow", False), "display": display,

@@ -63,6 +63,10 @@ async def _period_baseline(session: AsyncSession, period: str) -> dict[str, floa
     spend = int((await session.execute(
         select(func.coalesce(func.sum(Channel.spend), 0))
     )).scalar() or 0)
+    # Клики (Директ) и визиты (Метрика) — 30-дневные итоги из базлайна.
+    ad = dict((await session.execute(
+        select(Baseline.key, Baseline.value).where(Baseline.key.in_(["clicks", "visits"]))
+    )).all())
 
     return {
         "leads": float(len(rows)),
@@ -73,6 +77,8 @@ async def _period_baseline(session: AsyncSession, period: str) -> dict[str, floa
         "revenue": float(revenue),
         "margin": float(margin),
         "spend": float(spend),
+        "clicks": float(ad.get("clicks", 0)),
+        "visits": float(ad.get("visits", 0)),
         "first_contact": 0.0,
         "overdue": 0.0,
     }
