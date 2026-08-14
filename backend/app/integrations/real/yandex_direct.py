@@ -20,18 +20,22 @@ REPORTS_URL = "https://api.direct.yandex.com/json/v5/reports"
 
 
 def parse_tsv(text: str, fields: list[str]) -> list[dict]:
-    """Разбирает TSV-отчёт (первая строка — заголовки колонок).
+    """Разбирает TSV-отчёт Reports API.
 
-    Пустой/вырожденный отчёт (например, все кампании на паузе, нет статистики)
-    даёт пустой список, а не падение: если в заголовке нет запрошенных полей —
-    возвращаем [] сразу.
+    Ответ может начинаться со строки названия отчёта (если не задан skipReportHeader),
+    поэтому ищем строку заголовков — первую, где встречается хотя бы одно запрошенное
+    поле, — и только затем читаем данные. Пустой отчёт (нет статистики) → [].
     """
-    rows: list[dict] = []
     reader = io.StringIO(text)
-    header = reader.readline().rstrip("\n").split("\t")
-    idx = {name: header.index(name) for name in fields if name in header}
+    idx: dict[str, int] = {}
+    for line in reader:  # пропускаем возможную строку названия отчёта
+        cells = line.rstrip("\n").split("\t")
+        idx = {name: cells.index(name) for name in fields if name in cells}
+        if idx:
+            break
     if not idx:
         return []
+    rows: list[dict] = []
     for line in reader:
         line = line.rstrip("\n")
         if not line:
@@ -69,7 +73,8 @@ def _report(body: dict, fields: list[str]) -> list[dict]:
         "Accept-Language": "ru",
         "processingMode": "auto",
         "returnMoneyInMicros": "false",
-        "skipReportSummary": "true",
+        "skipReportHeader": "true",   # без строки названия отчёта — сразу заголовки колонок
+        "skipReportSummary": "true",  # без строки «Total rows»
     }
     if settings.yandex_direct_login:
         headers["Client-Login"] = settings.yandex_direct_login
