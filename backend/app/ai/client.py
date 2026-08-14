@@ -16,6 +16,20 @@ class LLMNotConfigured(RuntimeError):
     pass
 
 
+def _error_detail(resp: httpx.Response) -> str:
+    """Человекочитаемая причина ошибки LLM API (OpenAI-формат {'error': {...}})."""
+    try:
+        data = resp.json()
+        err = data.get("error") if isinstance(data, dict) else None
+        if isinstance(err, dict):
+            return str(err.get("message") or err.get("code") or err)
+        if err:
+            return str(err)
+        return str(data)[:300]
+    except ValueError:
+        return (resp.text or "").strip()[:300] or f"HTTP {resp.status_code}"
+
+
 class LLMClient:
     def __init__(self) -> None:
         if not settings.llm_api_key or not settings.llm_base_url:
@@ -30,7 +44,10 @@ class LLMClient:
         """Синхронный вызов chat-completions (для джобов планировщика)."""
         resp = httpx.post(
             f"{self._base}/chat/completions",
-            headers={"Authorization": f"Bearer {self._key}"},
+            headers={
+                "Authorization": f"Bearer {self._key}",
+                "Content-Type": "application/json",
+            },
             json={
                 "model": self._model,
                 "messages": [
@@ -41,9 +58,17 @@ class LLMClient:
             },
             timeout=timeout,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            # Пробрасываем реальный текст ошибки провайдера (напр. про модель),
+            # а не глухое «400 Bad Request».
+            raise RuntimeError(f"LLM API {resp.status_code}: {_error_detail(resp)}")
         data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        try:
+            return data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(
+                f"LLM API: неожиданный формат ответа — {str(data)[:200]}"
+            ) from exc
 
 
 def is_configured() -> bool:
