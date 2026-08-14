@@ -22,7 +22,7 @@ from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.logging import get_logger
 from app.integrations import factory
-from app.models import AdCost, Baseline, Campaign, Channel, Deal, Product
+from app.models import AdCost, Baseline, Campaign, Channel, Deal, MinusWord, Product
 from app.services import romi
 
 logger = get_logger("banapal.ingest")
@@ -101,33 +101,52 @@ def _deal_from_bitrix(
     )
 
 # Правила отнесения кампании к каналу (по префиксу названия кампании).
-CHANNEL_RULES: list[tuple[str, str, str]] = [
-    ("Поиск", "Яндекс Директ — Поиск", "#635BFF"),
-    ("РСЯ", "Яндекс Директ — РСЯ", "#9E77ED"),
+# Классификация кампании в канал по ключевым словам в названии (регистронезависимо).
+CHANNEL_RULES: list[tuple[tuple[str, ...], str, str]] = [
+    (("поиск", "search", "srch"), "Яндекс Директ — Поиск", "#635BFF"),
+    (("рся", "сети", "network", "rsya", "смарт"), "Яндекс Директ — РСЯ", "#9E77ED"),
 ]
-DEFAULT_CHANNEL = ("Прочее", "#1BA9C7")
+DEFAULT_CHANNEL = ("Яндекс Директ — прочее", "#1BA9C7")
 
 
 def channel_for_campaign(campaign_name: str) -> tuple[str, str]:
-    """Канал (имя, цвет) по названию кампании."""
-    for prefix, channel, color in CHANNEL_RULES:
-        if campaign_name.startswith(prefix):
+    """Канал (имя, цвет) по названию кампании (по ключевым словам, регистронезависимо)."""
+    low = (campaign_name or "").lower()
+    for keywords, channel, color in CHANNEL_RULES:
+        if any(k in low for k in keywords):
             return channel, color
     return DEFAULT_CHANNEL
 
 
+def _deal_cost(deal: dict) -> int:
+    """Себестоимость сделки из сопоставленного поля (custom['cost']), ₽."""
+    raw = (deal.get("custom") or {}).get("cost")
+    if raw is None:
+        return 0
+    try:
+        return int(float(str(raw).replace(" ", "").replace("\xa0", "").replace(",", ".")))
+    except (TypeError, ValueError):
+        return 0
+
+
 def aggregate_channels(
     direct_costs: list[dict],
-    margin_by_product: dict[str, float] | None = None,  # noqa: ARG001 (Этап расширения)
+    deals: list[dict] | None = None,
 ) -> list[dict]:
-    """Строит витрину каналов/кампаний из расходов Директа.
+    """Строит витрину каналов/кампаний из расхода Директа + атрибуции сделок.
 
-    Расход приводится к базе без НДС. Лиды/сделки/оплаты/выручка на боевых данных
-    добавляются атрибуцией сделок (расширяется при подключённом Битрикс24).
+    Расход приводится к базе без НДС. Сделки привязываются к кампаниям по utm_campaign
+    (сопоставление с id или названием кампании Директа); по привязанным сделкам
+    считаются лиды/сделки/оплаты/выручка/маржа. Маржа = выручка − себестоимость
+    (из сопоставленного поля; без него ≈ выручка).
     """
+    deals = deals or []
     channels: dict[str, dict] = {}
+    camp_index: dict[str, dict] = {}  # ключ (id/имя) → запись кампании
+
     for row in direct_costs:
         camp = row.get("campaign", "")
+        cid = str(row.get("campaign_id") or "").strip()
         spend_net = round(romi.vat_to_net(row.get("spend_gross", 0)))
         ch_name, color = channel_for_campaign(camp)
         ch = channels.setdefault(ch_name, {
@@ -136,11 +155,59 @@ def aggregate_channels(
             "campaigns": [],
         })
         ch["spend"] += spend_net
-        ch["campaigns"].append({
+        crec = {
             "name": camp, "spend": spend_net,
             "leads": 0, "deals": 0, "payments": 0, "revenue": 0, "margin": 0,
-        })
+        }
+        ch["campaigns"].append(crec)
+        if cid:
+            camp_index[cid] = crec
+        if camp:
+            camp_index[camp.strip().lower()] = crec
+
+    # Атрибуция сделок к кампаниям по utm_campaign (id или название).
+    for d in deals:
+        key = str(d.get("campaign") or "").strip()
+        if not key:
+            continue
+        crec = camp_index.get(key) or camp_index.get(key.lower())
+        if crec is None:
+            continue
+        amount = int(d.get("amount") or 0)
+        crec["leads"] += 1
+        if amount > 0:
+            crec["deals"] += 1
+        if d.get("semantic") == "S":  # выигранная сделка
+            crec["payments"] += 1
+            crec["revenue"] += amount
+            crec["margin"] += amount - _deal_cost(d)
+
+    # Свернуть кампании в каналы.
+    for ch in channels.values():
+        for k in ("leads", "deals", "payments", "revenue", "margin"):
+            ch[k] = sum(c[k] for c in ch["campaigns"])
     return list(channels.values())
+
+
+_MINUS_WORD_LIMIT = 200
+
+
+def minus_word_candidates(search_queries: list[dict]) -> list[dict]:
+    """Кандидаты в минус-слова: поисковые запросы с расходом и без конверсий.
+
+    Это фразы, на которые тратится бюджет без результата — топ по расходу (без НДС)."""
+    out: list[dict] = []
+    for q in search_queries:
+        spend_net = round(romi.vat_to_net(q.get("spend", 0)))
+        if spend_net <= 0 or int(q.get("conv") or 0) > 0:
+            continue
+        out.append({
+            "phrase": q.get("phrase", ""), "camp": q.get("camp", ""),
+            "shows": int(q.get("shows") or 0), "clicks": int(q.get("clicks") or 0),
+            "spend": spend_net, "reason": "Расход без конверсий",
+        })
+    out.sort(key=lambda x: x["spend"], reverse=True)
+    return out[:_MINUS_WORD_LIMIT]
 
 
 def baseline_from(channels: list[dict], deals: list[dict]) -> dict[str, float]:
@@ -239,13 +306,20 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
         deals = []
         sources["bitrix24"] = {"status": "skipped"}
 
-    # 2. Расход Яндекс Директа (для витрины каналов).
+    # 2. Расход Яндекс Директа (для витрины каналов) + поисковые запросы (минус-слова).
+    search_queries: list[dict] = []
     if settings.yandex_oauth_token:
         direct_costs = await _fetch_source(
             sources, "yandex_direct", "Яндекс Директ",
             lambda: factory.get_yandex_direct().fetch_channels(),
             progress, "Яндекс Директ: статистика кампаний…",
         )
+        try:
+            if progress:
+                await progress("Яндекс Директ: поисковые запросы (минус-слова)…")
+            search_queries = factory.get_yandex_direct().fetch_search_queries()
+        except Exception as exc:  # noqa: BLE001 — минус-слова необязательны
+            logger.warning("Яндекс Директ: отчёт по запросам недоступен: %s", exc)
     else:
         direct_costs = []
         sources["yandex_direct"] = {"status": "skipped"}
@@ -265,8 +339,9 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     # 4. Пересчёт витрин
     if progress:
         await progress("Пересчёт витрин и показателей…")
-    channels = aggregate_channels(direct_costs)
+    channels = aggregate_channels(direct_costs, deals)
     baseline = baseline_from(channels, deals)
+    minus_words = minus_word_candidates(search_queries)
 
     # 5. Запись (сделки + каналы + продукты + базлайны)
     await session.execute(delete(Deal))  # каскадно чистит задачи/историю этапов
@@ -300,6 +375,12 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     for p in products:
         session.add(Product(
             name=p["name"], brand=p.get("brand"), cost_price=p.get("cost_price", 0),
+        ))
+    for i, mw in enumerate(minus_words):
+        session.add(MinusWord(
+            position=i, phrase=mw["phrase"], camp=mw["camp"],
+            shows=mw["shows"], clicks=mw["clicks"], spend=mw["spend"],
+            conv=0, deals=0, reason=mw["reason"], status="new",
         ))
     for key, value in baseline.items():
         session.add(Baseline(key=key, value=value))
