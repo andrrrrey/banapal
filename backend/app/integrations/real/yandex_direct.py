@@ -18,6 +18,10 @@ from app.integrations.real._http import DEFAULT_TIMEOUT
 
 REPORTS_URL = "https://api.direct.yandex.com/json/v5/reports"
 
+# Сколько ждать офлайн-генерацию отчёта (сек). Тяжёлые отчёты (поисковые запросы)
+# ставятся в очередь и готовятся дольше, чем отчёт по кампаниям.
+_REPORT_DEADLINE = 150
+
 
 def parse_tsv(text: str, fields: list[str]) -> list[dict]:
     """Разбирает TSV-отчёт Reports API.
@@ -79,13 +83,18 @@ def _report(body: dict, fields: list[str]) -> list[dict]:
     if settings.yandex_direct_login:
         headers["Client-Login"] = settings.yandex_direct_login
 
+    # Тяжёлые отчёты (напр. по поисковым запросам) Яндекс формирует офлайн: возвращает
+    # 201/202 с retryIn и ставит в очередь. Ждём генерацию до _REPORT_DEADLINE секунд,
+    # уважая retryIn (с разумным потолком), а не фиксированные 6 попыток.
+    deadline = time.monotonic() + _REPORT_DEADLINE
     with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
-        for _ in range(6):  # отчёт может готовиться (201/202)
+        while time.monotonic() < deadline:
             resp = client.post(REPORTS_URL, headers=headers, json=body)
             if resp.status_code == 200:
                 return parse_tsv(resp.text, fields)
             if resp.status_code in (201, 202):
-                time.sleep(min(int(resp.headers.get("retryIn", 5)), 15))
+                wait = int(resp.headers.get("retryIn", 5) or 5)
+                time.sleep(max(1, min(wait, 20)))
                 continue
             # Любой другой код — ошибка API: пробрасываем текст Яндекса наружу.
             raise RuntimeError(f"Яндекс Директ: {_error_detail(resp)}")
