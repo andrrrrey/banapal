@@ -94,7 +94,8 @@ def _report(body: dict, fields: list[str]) -> list[dict]:
 
 class RealYandexDirectAdapter:
     def fetch_channels(self) -> list[dict]:
-        fields = ["CampaignName", "Cost", "Clicks", "Impressions"]
+        # CampaignId — для атрибуции сделок по utm_campaign (обычно = id кампании).
+        fields = ["CampaignId", "CampaignName", "Cost", "Clicks", "Impressions"]
         body = {"params": {
             "SelectionCriteria": {},
             "FieldNames": fields,
@@ -107,6 +108,7 @@ class RealYandexDirectAdapter:
         }}
         rows = _report(body, fields)
         return [{
+            "campaign_id": r.get("CampaignId", ""),
             "campaign": r.get("CampaignName", ""),
             "spend_gross": int(float(r.get("Cost", 0) or 0)),
             "clicks": int(float(r.get("Clicks", 0) or 0)),
@@ -114,7 +116,7 @@ class RealYandexDirectAdapter:
         } for r in rows if r.get("CampaignName")]
 
     def fetch_search_queries(self) -> list[dict]:
-        fields = ["Query", "CampaignName", "Cost", "Clicks", "Conversions"]
+        fields = ["Query", "CampaignName", "Impressions", "Cost", "Clicks", "Conversions"]
         body = {"params": {
             "SelectionCriteria": {},
             "FieldNames": fields,
@@ -129,6 +131,7 @@ class RealYandexDirectAdapter:
         return [{
             "phrase": r.get("Query", ""),
             "camp": r.get("CampaignName", ""),
+            "shows": int(float(r.get("Impressions", 0) or 0)),
             "spend": int(float(r.get("Cost", 0) or 0)),
             "clicks": int(float(r.get("Clicks", 0) or 0)),
             "conv": int(float(r.get("Conversions", 0) or 0)),
