@@ -63,6 +63,27 @@ export default function RomiPage() {
     setStatuses((p) => ({ ...p, [i]: next }));
   };
 
+  // Реальная выгрузка минус-слов: текстовый файл (по фразе на строку — формат,
+  // который вставляется в «Минус-фразы» Яндекс Директа).
+  const onDownloadMinus = () => {
+    const items = mw.data?.items ?? [];
+    if (!items.length) {
+      message.info("Нет кандидатов в минус-слова — выполните пересчёт с подключённым Директом.");
+      return;
+    }
+    const body = items.map((i) => i.phrase.trim()).filter(Boolean).join("\n");
+    const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "minus-words-yandex-direct.txt";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    message.success(`Скачано минус-слов: ${items.length}`);
+  };
+
   return (
     <>
       <div className="grid two-b">
@@ -155,7 +176,7 @@ export default function RomiPage() {
           </div>
         </div>
         <div className="ec-act">
-          <Button type="primary" onClick={() => message.success("Список подготовлен к выгрузке (демо)")}>Скачать список</Button>
+          <Button type="primary" onClick={onDownloadMinus}>Скачать список</Button>
           <span className="ec-note">формат Яндекс Директа</span>
         </div>
       </div>
