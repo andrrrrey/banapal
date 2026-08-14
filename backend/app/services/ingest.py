@@ -324,6 +324,17 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
         direct_costs = []
         sources["yandex_direct"] = {"status": "skipped"}
 
+    # 2b. Визиты Яндекс Метрики (для шага «Визиты» сквозной цепочки).
+    metrika_visits: list[dict] = []
+    if settings.yandex_oauth_token and settings.yandex_metrika_counter_id:
+        metrika_visits = await _fetch_source(
+            sources, "yandex_metrika", "Яндекс Метрика",
+            lambda: factory.get_yandex_metrika().fetch_visits(),
+            progress, "Яндекс Метрика: визиты…",
+        )
+    else:
+        sources["yandex_metrika"] = {"status": "skipped"}
+
     # 3. Номенклатура МойСклад (себестоимость/бренды).
     # Источник настроен, если задан DSN реплики mpdb ИЛИ токен API (резерв).
     if (settings.moysklad_pg_dsn or "").strip() or settings.moysklad_token:
@@ -341,6 +352,9 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
         await progress("Пересчёт витрин и показателей…")
     channels = aggregate_channels(direct_costs, deals)
     baseline = baseline_from(channels, deals)
+    # Клики (Директ) и визиты (Метрика) — для первых шагов сквозной цепочки.
+    baseline["clicks"] = float(sum(int(r.get("clicks") or 0) for r in direct_costs))
+    baseline["visits"] = float(sum(int(v.get("visits") or 0) for v in metrika_visits))
     minus_words = minus_word_candidates(search_queries)
 
     # 5. Запись (сделки + каналы + продукты + базлайны)
