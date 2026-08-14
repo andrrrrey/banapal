@@ -22,7 +22,8 @@ from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.logging import get_logger
 from app.integrations import factory
-from app.models import AdCost, Baseline, Campaign, Channel, Deal, MinusWord, Product
+from app.models import AdCost, Baseline, BudgetRec, Campaign, Channel, Deal, MinusWord, Product
+from app.services import format as f
 from app.services import romi
 
 logger = get_logger("banapal.ingest")
@@ -192,6 +193,68 @@ def aggregate_channels(
 _MINUS_WORD_LIMIT = 200
 
 
+# Стиль карточки рекомендации по действию: (tag_class, ic, svg-path).
+_REC_STYLE = {
+    "scale": ("t-green", "i-green",
+              '<path d="M4 18l6-6 4 4 6-8" stroke-linecap="round" stroke-linejoin="round"/>'
+              '<path d="M16 8h4v4" stroke-linecap="round" stroke-linejoin="round"/>'),
+    "watch": ("t-violet", "i-violet",
+              '<circle cx="12" cy="12" r="9"/><path d="M12 8v5" stroke-linecap="round"/>'),
+    "check": ("t-amber", "i-amber",
+              '<circle cx="12" cy="12" r="9"/><path d="M12 8v5" stroke-linecap="round"/>'),
+    "limit": ("t-red", "i-red",
+              '<path d="M4 6l6 6 4-4 6 8" stroke-linecap="round" stroke-linejoin="round"/>'
+              '<path d="M16 16h4v-4" stroke-linecap="round" stroke-linejoin="round"/>'),
+}
+
+
+def budget_recs_from_channels(channels: list[dict]) -> list[dict]:
+    """Рекомендации по бюджету из каналов — по ROMI (детерминированная логика).
+
+    Масштабировать / Под наблюдением / Проверить / Ограничить — по порогам ROMI.
+    Проблемные каналы (Ограничить/Проверить) идут первыми."""
+    recs: list[dict] = []
+    for ch in channels:
+        spend = int(ch.get("spend") or 0)
+        if spend <= 0:
+            continue
+        margin = int(ch.get("margin") or 0)
+        revenue = int(ch.get("revenue") or 0)
+        payments = int(ch.get("payments") or 0)
+        r = romi.romi(margin, spend)
+        if r is None:
+            continue
+        if r >= 200:
+            key, label = "scale", "Масштабировать"
+        elif r >= 120:
+            key, label = "watch", "Под наблюдением"
+        elif r >= 80:
+            key, label = "check", "Проверить"
+        else:
+            key, label = "limit", "Ограничить"
+        tag_class, ic, svg = _REC_STYLE[key]
+        text = {
+            "scale": f"Высокий ROMI ({r}%): канал окупается — есть смысл наращивать бюджет.",
+            "watch": f"ROMI ({r}%) в пределах цели — держим бюджет и наблюдаем за динамикой.",
+            "check": f"ROMI ({r}%) ниже цели — проверить ставки, связки и качество трафика.",
+            "limit": f"ROMI ({r}%) ниже окупаемости — сократить расход или пересобрать кампании.",
+        }[key]
+        recs.append({
+            "title": ch.get("name", ""), "tag_label": label, "tag_class": tag_class,
+            "ic": ic, "svg": svg, "text": text,
+            "why": f"Расход {f.money(spend)}, выручка {f.money(revenue)}, "
+                   f"оплат {payments}, ROMI {r}%.",
+            "impact": (f"− до {f.money(spend)}/мес" if key == "limit"
+                       else "потенциал роста выручки" if key == "scale" else ""),
+            "src": ["Яндекс Директ", "МойСклад"], "conf": "высокая",
+            # Маржа == выручка → себестоимость не сопоставлена (маржа неточная).
+            "dep": margin == revenue,
+        })
+    order = {"t-red": 0, "t-amber": 1, "t-violet": 2, "t-green": 3}
+    recs.sort(key=lambda x: order.get(x["tag_class"], 9))
+    return recs
+
+
 def minus_word_candidates(search_queries: list[dict]) -> list[dict]:
     """Кандидаты в минус-слова: поисковые запросы с расходом и без конверсий.
 
@@ -356,6 +419,7 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     baseline["clicks"] = float(sum(int(r.get("clicks") or 0) for r in direct_costs))
     baseline["visits"] = float(sum(int(v.get("visits") or 0) for v in metrika_visits))
     minus_words = minus_word_candidates(search_queries)
+    budget_recs = budget_recs_from_channels(channels)
 
     # 5. Запись (сделки + каналы + продукты + базлайны)
     await session.execute(delete(Deal))  # каскадно чистит задачи/историю этапов
@@ -395,6 +459,13 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
             position=i, phrase=mw["phrase"], camp=mw["camp"],
             shows=mw["shows"], clicks=mw["clicks"], spend=mw["spend"],
             conv=0, deals=0, reason=mw["reason"], status="new",
+        ))
+    for i, rec in enumerate(budget_recs):
+        session.add(BudgetRec(
+            position=i, ic=rec["ic"], svg=rec["svg"], title=rec["title"],
+            tag_label=rec["tag_label"], tag_class=rec["tag_class"], text=rec["text"],
+            why=rec["why"], impact=rec["impact"], src=rec["src"],
+            conf=rec["conf"], dep=rec["dep"],
         ))
     for key, value in baseline.items():
         session.add(Baseline(key=key, value=value))
