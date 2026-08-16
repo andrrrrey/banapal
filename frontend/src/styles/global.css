@@ -335,7 +335,7 @@ tr.rk-row-mid td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 .rec { padding: 17px 18px; border-radius: 14px; border: 1px solid var(--line); background: #fff; box-shadow: var(--shadow); display: flex; gap: 14px; }
 .rec .ric { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; flex: none; }
 .rec .ric svg { width: 19px; height: 19px; }
-.rec h4 { font-size: 14px; font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+.rec h4 { font-size: 14px; font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rec p { font-size: 13px; color: #4A5364; line-height: 1.55; }
 .rec .why { font-size: 12px; color: var(--muted); margin-top: 8px; background: #FAFAFB; border: 1px solid var(--line2); border-radius: 9px; padding: 8px 11px; }
 .rec .why b { color: var(--ink); }
@@ -344,7 +344,7 @@ tr.rk-row-mid td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 .srcchip { font-size: 10.5px; font-weight: 600; color: #5A6376; background: #EEF0F5; border: 1px solid var(--line); padding: 2px 8px; border-radius: 6px; }
 .conf { font-size: 11.5px; color: var(--muted); } .conf b { color: var(--ink); font-weight: 600; }
 .rec-act { display: flex; gap: 8px; margin-top: 13px; align-items: center; flex-wrap: wrap; }
-.rec-act .impact { margin-left: auto; }
+.rec-act .impact { margin-left: auto; white-space: normal; text-align: left; max-width: 100%; }
 .depchip { font-size: 10.5px; font-weight: 600; color: #B45D07; background: var(--amber-soft); border: 1px solid #FAE3C0; padding: 2px 8px; border-radius: 6px; }
 
 /* Выгрузка минус-слов */
@@ -369,7 +369,8 @@ tr.rk-row-mid td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 .insight { padding: 16px 18px; border-radius: 14px; border: 1px solid var(--line); background: #fff; box-shadow: var(--shadow); display: flex; gap: 13px; }
 .insight .iic { width: 34px; height: 34px; border-radius: 10px; flex: none; display: grid; place-items: center; }
 .insight .iic svg { width: 17px; height: 17px; }
-.insight .ihead { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; }
+.insight .ihead { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; flex-wrap: wrap; }
+.insight .ihead b { min-width: 0; overflow-wrap: anywhere; }
 .insight .ihead b { font-size: 13.5px; }
 .insight .ihead .sev { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 6px; text-transform: uppercase; letter-spacing: .03em; }
 .insight p { font-size: 13px; color: #3E4658; line-height: 1.6; }
@@ -494,8 +495,12 @@ tr.rk-row-mid td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 .nav-scrim { display: none; }
 
 @media (max-width: 768px) {
-  /* Оболочка: одна колонка, сайдбар — выдвижной drawer поверх контента */
+  /* Оболочка: одна колонка, сайдбар — выдвижной drawer поверх контента.
+     Гасим горизонтальный скролл страницы: широкий контент (таблицы, цепочка)
+     скроллится внутри своих обёрток .tbl-wrap/.chain, а не тянет всю страницу. */
   .app { grid-template-columns: 1fr; }
+  .main { min-width: 0; overflow-x: hidden; }
+  .content { max-width: 100%; overflow-x: hidden; }
   .sidebar {
     position: fixed; top: 0; left: 0; bottom: 0; width: 264px; z-index: 60;
     transform: translateX(-100%); transition: transform .25s ease;
@@ -516,16 +521,22 @@ tr.rk-row-mid td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
   .filterbar .seg { width: 100%; }
   .fb-select { width: 100%; }
 
-  /* Сетки карточек */
+  /* Сетки карточек — на дашборде остаются в 2 колонки */
   .kpis { grid-template-columns: repeat(2, 1fr); }
   .grid.two, .grid.two-b, .recs-grid { grid-template-columns: 1fr; }
   .att-tiles { grid-template-columns: repeat(2, 1fr); }
   .att-head { grid-template-columns: 1fr; }
 
   /* Крупные цифры — чуть меньше */
-  .kpi .val { font-size: 23px; }
+  .kpi .val { font-size: 22px; }
   .att-head .amv { font-size: 24px; }
   .chain-bar .cn { font-size: 20px; }
+
+  /* Строка нарушения (Мониторинг) — в столбец, чтобы кнопка/SLA не вылезали */
+  .deal { flex-wrap: wrap; }
+  .deal .body { flex: 1 1 100%; }
+  .sla { text-align: left; min-width: 0; }
+  .deal .act { margin-left: auto; }
 
   /* Карточка выгрузки — в столбец */
   .export-card { flex-direction: column; align-items: stretch; }
@@ -533,7 +544,9 @@ tr.rk-row-mid td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 }
 
 @media (max-width: 480px) {
-  .kpis, .att-tiles { grid-template-columns: 1fr; }
+  /* Карточки дашборда — в 2 колонки (по требованию); панель фильтров без spacer */
   .page-title h1 { font-size: 17px; }
   .demo-pill { display: none; }
+  .kpi { padding: 14px 13px; }
+  .att-tile { padding: 12px 12px; }
 }
