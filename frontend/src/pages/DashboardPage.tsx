@@ -34,7 +34,7 @@ export default function DashboardPage() {
   const revenue = useRevenueSeries(f.period);
   const romi = useRomiByChannel();
   const managers = useManagers();
-  const leads = useLeads(f.mgr, f.source, f.leadFilter);
+  const leads = useLeads(f.mgr, f.source, f.leadFilter, f.period);
 
   return (
     <>
@@ -66,7 +66,7 @@ export default function DashboardPage() {
           <div className="card">
             <EmptyState
               title="Нет данных по менеджерам"
-              hint="Агрегаты по менеджерам появятся после сопоставления пользователей Битрикс24 при настройке интеграции."
+              hint="Агрегаты считаются автоматически по сделкам Битрикс24 с назначенным ответственным. Подключите Битрикс24 и выполните пересчёт — если данных нет, значит у сделок за период не заполнен ответственный."
             />
           </div>
         ) : null}
