@@ -272,7 +272,73 @@ async def attention(session: AsyncSession) -> dict:
     }
 
 
+def _manager_zone(overdue: int, notask: int) -> tuple[str, str]:
+    """Зона менеджера по числу просрочек/сделок без задачи."""
+    if overdue >= 2 or notask >= 2:
+        return "зона риска", "t-red"
+    if overdue >= 1 or notask >= 1:
+        return "наблюдение", "t-amber"
+    return "в норме", "t-green"
+
+
+async def _managers_from_deals(session: AsyncSession) -> list[dict]:
+    """Агрегаты по менеджерам из реальных сделок Битрикс24 (боевой режим).
+
+    Имя менеджера уже сопоставлено при выгрузке (ASSIGNED_BY_ID → ФИО через
+    справочник сотрудников). Просрочки и «сделки без задачи» берём из движка
+    регламента (те же нарушения, что на «Мониторинге»)."""
+    deals = (await session.execute(
+        select(Deal).where(
+            Deal.on_dashboard.is_(True), Deal.mgr.is_not(None), Deal.mgr != "—"
+        )
+    )).scalars().all()
+    if not deals:
+        return []
+
+    # Нарушения по менеджерам: просрочки (over) и «нет задачи» (ptype no_task).
+    from app.services import violations as vio
+    evaluated = await vio.evaluate_current(session)
+    overdue: dict[str, int] = {}
+    notask: dict[str, int] = {}
+    for v in evaluated.get("regular", []):
+        name = v.get("mgr")
+        if not name:
+            continue
+        if v.get("over"):
+            overdue[name] = overdue.get(name, 0) + 1
+        if v.get("ptype") == "no_task":
+            notask[name] = notask.get(name, 0) + 1
+
+    agg: dict[str, dict] = {}
+    for d in deals:
+        m = agg.setdefault(d.mgr, {
+            "name": d.mgr, "inwork": 0, "invoices": 0, "payments": 0, "paysum": 0,
+        })
+        if d.status_class == "st-mid":  # в работе (не выиграна и не проиграна)
+            m["inwork"] += 1
+        if d.invoice:
+            m["invoices"] += 1
+        if d.status_class == "st-ok":  # выигранная сделка
+            m["payments"] += 1
+            m["paysum"] += int(d.amount or 0)
+
+    out: list[dict] = []
+    for m in agg.values():
+        ov, nt = overdue.get(m["name"], 0), notask.get(m["name"], 0)
+        zone_label, zone_class = _manager_zone(ov, nt)
+        out.append({
+            **m, "overdue": ov, "notask": nt, "fc": "—",
+            "paysum_display": f.money(m["paysum"]),
+            "zone_label": zone_label, "zone_class": zone_class,
+        })
+    # Самые результативные — выше; при равенстве по имени.
+    out.sort(key=lambda x: (-x["paysum"], x["name"]))
+    return out
+
+
 async def managers(session: AsyncSession) -> list[dict]:
+    if settings.data_source == "real":
+        return await _managers_from_deals(session)
     rows = (await session.execute(
         select(ManagerControl).order_by(ManagerControl.position)
     )).scalars().all()
@@ -288,15 +354,22 @@ async def managers(session: AsyncSession) -> list[dict]:
 
 
 async def leads(
-    session: AsyncSession, mgr: str = "all", source: str = "all", risk: str | None = None
+    session: AsyncSession, mgr: str = "all", source: str = "all",
+    risk: str | None = None, period: str = "30",
 ) -> list[dict]:
-    stmt = select(Deal).where(Deal.on_dashboard.is_(True)).order_by(Deal.position)
+    stmt = select(Deal).where(Deal.on_dashboard.is_(True))
+    # В боевом режиме список лидов следует выбранному периоду (по дате создания),
+    # чтобы переключатель периода менял и таблицу «Обработка лидов».
+    if settings.data_source == "real":
+        start = _period_start(period, datetime.now(UTC))
+        stmt = stmt.where(Deal.created_at.is_not(None), Deal.created_at >= start)
     if mgr and mgr != "all":
         stmt = stmt.where(Deal.mgr == mgr)
     if source and source != "all":
         stmt = stmt.where(Deal.src == source)
     if risk == "risk":
         stmt = stmt.where(Deal.risk.is_not(None))
+    stmt = stmt.order_by(Deal.position)
     rows = (await session.execute(stmt)).scalars().all()
     return [
         {

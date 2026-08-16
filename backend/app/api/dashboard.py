@@ -66,6 +66,7 @@ async def get_leads(
     mgr: str = "all",
     source: str = "all",
     risk: str | None = None,
+    period: str = "30",
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    return await metrics.leads(session, mgr=mgr, source=source, risk=risk)
+    return await metrics.leads(session, mgr=mgr, source=source, risk=risk, period=period)

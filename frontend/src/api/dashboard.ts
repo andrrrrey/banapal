@@ -83,14 +83,15 @@ export const useRomiByChannel = () =>
 export const useManagers = () =>
   useQuery<Manager[]>({ queryKey: ["dashboard", "managers"], queryFn: () => api.get("/dashboard/managers") });
 
-export const useLeads = (mgr: string, source: string, risk: string | null) =>
+export const useLeads = (mgr: string, source: string, risk: string | null, period: string) =>
   useQuery<Lead[]>({
-    queryKey: ["dashboard", "leads", mgr, source, risk],
+    queryKey: ["dashboard", "leads", mgr, source, risk, period],
     queryFn: () => {
       const q = new URLSearchParams();
       if (mgr && mgr !== "all") q.set("mgr", mgr);
       if (source && source !== "all") q.set("source", source);
       if (risk) q.set("risk", risk);
+      if (period) q.set("period", period);
       const qs = q.toString();
       return api.get(`/dashboard/leads${qs ? `?${qs}` : ""}`);
     },
