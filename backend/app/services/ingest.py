@@ -24,7 +24,7 @@ from app.core.logging import get_logger
 from app.integrations import factory
 from app.models import AdCost, Baseline, BudgetRec, Campaign, Channel, Deal, MinusWord, Product
 from app.services import format as f
-from app.services import romi
+from app.services import rec_style, romi
 
 logger = get_logger("banapal.ingest")
 
@@ -193,21 +193,6 @@ def aggregate_channels(
 _MINUS_WORD_LIMIT = 200
 
 
-# Стиль карточки рекомендации по действию: (tag_class, ic, svg-path).
-_REC_STYLE = {
-    "scale": ("t-green", "i-green",
-              '<path d="M4 18l6-6 4 4 6-8" stroke-linecap="round" stroke-linejoin="round"/>'
-              '<path d="M16 8h4v4" stroke-linecap="round" stroke-linejoin="round"/>'),
-    "watch": ("t-violet", "i-violet",
-              '<circle cx="12" cy="12" r="9"/><path d="M12 8v5" stroke-linecap="round"/>'),
-    "check": ("t-amber", "i-amber",
-              '<circle cx="12" cy="12" r="9"/><path d="M12 8v5" stroke-linecap="round"/>'),
-    "limit": ("t-red", "i-red",
-              '<path d="M4 6l6 6 4-4 6 8" stroke-linecap="round" stroke-linejoin="round"/>'
-              '<path d="M16 16h4v-4" stroke-linecap="round" stroke-linejoin="round"/>'),
-}
-
-
 def budget_recs_from_channels(channels: list[dict]) -> list[dict]:
     """Рекомендации по бюджету из каналов — по ROMI (детерминированная логика).
 
@@ -225,14 +210,15 @@ def budget_recs_from_channels(channels: list[dict]) -> list[dict]:
         if r is None:
             continue
         if r >= 200:
-            key, label = "scale", "Масштабировать"
+            key = "scale"
         elif r >= 120:
-            key, label = "watch", "Под наблюдением"
+            key = "watch"
         elif r >= 80:
-            key, label = "check", "Проверить"
+            key = "check"
         else:
-            key, label = "limit", "Ограничить"
-        tag_class, ic, svg = _REC_STYLE[key]
+            key = "limit"
+        label = rec_style.KEY_LABELS[key]
+        tag_class, ic, svg = rec_style.REC_STYLE[key]
         text = {
             "scale": f"Высокий ROMI ({r}%): канал окупается — есть смысл наращивать бюджет.",
             "watch": f"ROMI ({r}%) в пределах цели — держим бюджет и наблюдаем за динамикой.",
@@ -250,8 +236,7 @@ def budget_recs_from_channels(channels: list[dict]) -> list[dict]:
             # Маржа == выручка → себестоимость не сопоставлена (маржа неточная).
             "dep": margin == revenue,
         })
-    order = {"t-red": 0, "t-amber": 1, "t-violet": 2, "t-green": 3}
-    recs.sort(key=lambda x: order.get(x["tag_class"], 9))
+    recs.sort(key=lambda x: rec_style.TAG_ORDER.get(x["tag_class"], 9))
     return recs
 
 

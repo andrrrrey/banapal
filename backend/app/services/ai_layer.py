@@ -16,7 +16,8 @@ from app.ai import client as llm
 from app.ai import prompts
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.models import AiInsight, Baseline, Channel
+from app.models import AiInsight, Baseline, BudgetRec, Channel
+from app.services import rec_style
 
 logger = get_logger("banapal.ai")
 
@@ -141,6 +142,73 @@ async def generate_insights(session: AsyncSession) -> dict:
     session.add_all(prepared)
     await session.commit()
     logger.info("AI-инсайты сгенерированы через LLM: %d", len(prepared))
+    return {"generated": True, "count": len(prepared)}
+
+
+async def generate_budget_recs(session: AsyncSession) -> dict:
+    """Генерирует рекомендации по бюджету через LLM по сводке каналов и сохраняет их.
+
+    Требует настроенной AI-интеграции (LLM_API_KEY, LLM_BASE_URL). Заменяет текущий
+    набор рекомендаций (таблица BudgetRec). Вход — те же реальные показатели каналов,
+    что и для инсайтов; модель только интерпретирует их (без выдуманных чисел).
+    """
+    if not llm.is_configured():
+        return {"generated": False, "reason": "llm_not_configured"}
+
+    summary = await _analytics_summary(session)
+    client = llm.LLMClient()
+    system = (
+        prompts.SYSTEM_PROMPT
+        + " Верни СТРОГО валидный JSON-массив без markdown и пояснений."
+    )
+    user = (
+        prompts.budget_recs_prompt(summary)
+        + "\n\nФормат ответа — JSON-массив объектов с полями: "
+        '"title" (заголовок), "action" (одно из: Масштабировать, Под наблюдением, '
+        'Проверить, Ограничить), "text" (рекомендация), "why" (как найдено), '
+        '"impact" (эффект), "sources" (массив источников), '
+        '"confidence" (высокая|средняя|низкая), "dep" (true, если нужна связка '
+        "с МойСклад). Только JSON."
+    )
+
+    raw = client.complete(system, user)  # синхронный вызов LLM
+    items = _parse_items(raw)
+    if not items:
+        raise ValueError("LLM вернул ответ, который не удалось разобрать как JSON-рекомендации.")
+
+    prepared: list[BudgetRec] = []
+    for it in items[:6]:
+        title = _pick(it, "title", "заголовок", "channel", "канал")
+        if not title:
+            continue
+        _key, tag_label, tag_class, ic, svg = rec_style.style_for_action(
+            _pick(it, "action", "действие", "recommendation_type")
+        )
+        src = it.get("sources") or it.get("src") or it.get("источники") or []
+        if isinstance(src, str):
+            src = [src]
+        prepared.append(BudgetRec(
+            ic=ic, svg=svg, title=title[:255], tag_label=tag_label, tag_class=tag_class,
+            text=_pick(it, "text", "recommendation", "рекомендация"),
+            why=_pick(it, "why", "как_найдено", "reason", "обоснование"),
+            impact=_pick(it, "impact", "эффект")[:128],
+            src=[str(x) for x in src][:6],
+            conf=_pick(it, "confidence", "достоверность", default="средняя"),
+            dep=bool(it.get("dep")),
+        ))
+
+    if not prepared:
+        raise ValueError("LLM не вернул ни одной корректной рекомендации по бюджету.")
+
+    # Проблемные каналы (красные/жёлтые) — первыми, как в детерминированной логике.
+    prepared.sort(key=lambda r: rec_style.TAG_ORDER.get(r.tag_class, 9))
+    for i, rec in enumerate(prepared):
+        rec.position = i
+
+    await session.execute(delete(BudgetRec))
+    session.add_all(prepared)
+    await session.commit()
+    logger.info("AI-рекомендации по бюджету сгенерированы через LLM: %d", len(prepared))
     return {"generated": True, "count": len(prepared)}
 
 

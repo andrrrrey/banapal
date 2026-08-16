@@ -106,11 +106,11 @@ export default function RomiPage() {
         <div className="card" style={{ marginTop: 12 }}>
           <EmptyState
             title="Рекомендаций пока нет"
-            hint="Рекомендации по бюджету формирует AI-слой по данным Директа и МойСклад. Подключите интеграции и выполните пересчёт (для советов — «Сгенерировать AI» на странице «Интеграции»)."
+            hint="Рекомендации по бюджету формирует AI-слой по данным Директа и МойСклад. Подключите интеграции, выполните пересчёт и нажмите «Сгенерировать AI» на странице «Интеграции»."
           />
         </div>
       ) : (
-        <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 12 }}>
+        <div className="grid recs-grid" style={{ gap: 14, marginTop: 12 }}>
           {recs.data?.map((r, i) => <RecCard key={i} r={r} />)}
         </div>
       )}

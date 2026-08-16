@@ -48,11 +48,30 @@ def run_blocking(coro_factory: Callable[[], Awaitable[dict[str, Any]]]) -> dict[
 async def _generate_ai(session: AsyncSession) -> dict[str, Any]:
     from app.services import ai_layer
 
-    return await ai_layer.generate_insights(session)
+    # Инсайты и рекомендации по бюджету — два независимых вызова LLM. Инсайты
+    # коммитятся первыми: сбой генерации рекомендаций не должен откатывать их.
+    insights = await ai_layer.generate_insights(session)
+    result: dict[str, Any] = {
+        "generated": bool(insights.get("generated")),
+        "insights": insights.get("count", 0),
+    }
+    if not insights.get("generated"):
+        result["reason"] = insights.get("reason")
+    try:
+        recs = await ai_layer.generate_budget_recs(session)
+        result["budget_recs"] = recs.get("count", 0)
+        result["generated"] = result["generated"] or bool(recs.get("generated"))
+    except Exception as exc:  # noqa: BLE001 — не роняем успешные инсайты из-за рекомендаций
+        logger.warning("Генерация рекомендаций по бюджету не удалась: %s", exc)
+        result["budget_recs"] = 0
+        result["budget_recs_error"] = str(exc)
+    # Совместимость с UI: total-счётчик карточек (инсайты + рекомендации).
+    result["count"] = result["insights"] + result["budget_recs"]
+    return result
 
 
 async def generate_ai() -> dict[str, Any]:
-    """Генерация AI-инсайтов через LLM (если подключена AI-интеграция)."""
+    """Генерация AI-инсайтов и рекомендаций по бюджету через LLM (если подключён LLM)."""
     return await _with_session(_generate_ai)
 
 
