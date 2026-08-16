@@ -31,22 +31,22 @@ export function FilterBar() {
       </div>
       <div className="spacer" />
       <Select
+        className="fb-select"
         value={f.channel}
         onChange={f.setChannel}
         options={opts("Все каналы", o.data?.channels ?? [])}
-        style={{ width: 200 }}
       />
       <Select
+        className="fb-select"
         value={f.mgr}
         onChange={(v) => { f.setMgr(v); f.setLeadFilter(null); }}
         options={opts("Все менеджеры", o.data?.managers ?? [])}
-        style={{ width: 190 }}
       />
       <Select
+        className="fb-select"
         value={f.source}
         onChange={f.setSource}
         options={opts("Все источники", o.data?.sources ?? [])}
-        style={{ width: 160 }}
       />
     </div>
   );

@@ -227,6 +227,7 @@ body {
    ========================================================================== */
 .grid.two { grid-template-columns: 1.6fr 1fr; }
 .grid.two-b { grid-template-columns: 1fr 1fr; }
+.recs-grid { grid-template-columns: 1fr 1fr; }
 .kpis { grid-template-columns: repeat(4, 1fr); }
 .chart { width: 100%; }
 
@@ -379,7 +380,7 @@ tr.rk-row-mid td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 .i-rec svg { width: 16px; height: 16px; flex: none; color: #0A8A50; margin-top: 1px; }
 .i-rec span { font-size: 12.5px; color: #0A6B41; font-weight: 500; line-height: 1.5; }
 
-@media (max-width: 1100px) { .kpis { grid-template-columns: repeat(2, 1fr); } .grid.two, .grid.two-b { grid-template-columns: 1fr; } .att-tiles { grid-template-columns: repeat(2, 1fr); } .att-head { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .kpis { grid-template-columns: repeat(2, 1fr); } .grid.two, .grid.two-b, .recs-grid { grid-template-columns: 1fr; } .att-tiles { grid-template-columns: repeat(2, 1fr); } .att-head { grid-template-columns: 1fr; } }
 
 /* ---------- Интеграции ---------- */
 .intg-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
@@ -478,3 +479,61 @@ tr.rk-row-mid td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 .intg-src-errors { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .intg-src-error { font-size: 12px; color: var(--danger, #c0392b); line-height: 1.4; }
 .intg-src-error b { font-weight: 600; }
+
+/* ==========================================================================
+   Мобильная адаптация
+   ========================================================================== */
+/* Кнопка-бургер и затемнение — по умолчанию скрыты (видны только на мобильных) */
+.fb-select { width: 180px; }
+.menu-btn {
+  display: none; align-items: center; justify-content: center; flex: none;
+  width: 38px; height: 38px; padding: 0; border: 1px solid var(--line);
+  background: var(--card); border-radius: 10px; color: var(--ink); cursor: pointer;
+}
+.menu-btn svg { width: 20px; height: 20px; }
+.nav-scrim { display: none; }
+
+@media (max-width: 768px) {
+  /* Оболочка: одна колонка, сайдбар — выдвижной drawer поверх контента */
+  .app { grid-template-columns: 1fr; }
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 264px; z-index: 60;
+    transform: translateX(-100%); transition: transform .25s ease;
+    box-shadow: var(--shadow-lg);
+  }
+  .sidebar.open { transform: translateX(0); }
+  .nav-scrim { display: block; position: fixed; inset: 0; background: rgba(14,21,38,.5); z-index: 50; }
+  .menu-btn { display: inline-flex; }
+
+  /* Отступы и топбар */
+  .topbar { padding: 11px 14px; gap: 12px; flex-wrap: wrap; }
+  .clock { display: none; }
+  .filterbar { padding: 11px 14px; gap: 8px; }
+  .content { padding: 16px 14px 48px; }
+
+  /* Фильтры — на всю ширину */
+  .filterbar .spacer { display: none; }
+  .filterbar .seg { width: 100%; }
+  .fb-select { width: 100%; }
+
+  /* Сетки карточек */
+  .kpis { grid-template-columns: repeat(2, 1fr); }
+  .grid.two, .grid.two-b, .recs-grid { grid-template-columns: 1fr; }
+  .att-tiles { grid-template-columns: repeat(2, 1fr); }
+  .att-head { grid-template-columns: 1fr; }
+
+  /* Крупные цифры — чуть меньше */
+  .kpi .val { font-size: 23px; }
+  .att-head .amv { font-size: 24px; }
+  .chain-bar .cn { font-size: 20px; }
+
+  /* Карточка выгрузки — в столбец */
+  .export-card { flex-direction: column; align-items: stretch; }
+  .export-card .ec-act { flex-direction: row; align-items: center; justify-content: flex-start; }
+}
+
+@media (max-width: 480px) {
+  .kpis, .att-tiles { grid-template-columns: 1fr; }
+  .page-title h1 { font-size: 17px; }
+  .demo-pill { display: none; }
+}

@@ -26,7 +26,11 @@ function useMoscowClock() {
   return { time, date };
 }
 
-export function Topbar() {
+interface TopbarProps {
+  onMenu?: () => void;
+}
+
+export function Topbar({ onMenu }: TopbarProps) {
   const location = useLocation();
   const { time, date } = useMoscowClock();
   const logout = useLogout();
@@ -38,6 +42,11 @@ export function Topbar() {
 
   return (
     <header className="topbar">
+      <button className="menu-btn" onClick={onMenu} aria-label="Меню">
+        <svg fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" />
+        </svg>
+      </button>
       <div className="page-title">
         <h1>{item.label}</h1>
         <p>{item.subtitle}</p>

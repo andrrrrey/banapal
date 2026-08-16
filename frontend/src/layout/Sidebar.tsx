@@ -4,7 +4,12 @@ import { useDataSource } from "@/api/integrations";
 import { useMonitorStats } from "@/api/monitor";
 import { NAV_ITEMS, NAV_SECTIONS } from "./navConfig";
 
-export function Sidebar() {
+interface SidebarProps {
+  open?: boolean;
+  onClose?: () => void;
+}
+
+export function Sidebar({ open = false, onClose }: SidebarProps) {
   const mon = useMonitorStats();
   const ds = useDataSource();
   const isReal = ds.data?.data_source === "real";
@@ -18,7 +23,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${open ? " open" : ""}`}>
       <div className="brand">
         <div className="logo">B</div>
         <div>
@@ -35,7 +40,7 @@ export function Sidebar() {
               const { Icon } = item;
               const badge = badgeFor(item.key);
               return (
-                <NavLink key={item.key} to={item.path} className={({ isActive }) => (isActive ? "active" : "")}>
+                <NavLink key={item.key} to={item.path} onClick={onClose} className={({ isActive }) => (isActive ? "active" : "")}>
                   <Icon />
                   {item.label}
                   {badge ? <span className="badge">{badge}</span> : null}

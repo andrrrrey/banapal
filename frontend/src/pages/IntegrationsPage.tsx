@@ -262,7 +262,9 @@ export default function IntegrationsPage() {
     try {
       const res = await generateAi.mutateAsync();
       if (res.generated) {
-        message.success(`AI-советы обновлены · карточек: ${res.count ?? 0}`);
+        message.success(
+          `AI-советы обновлены · инсайтов: ${res.insights ?? 0}, рекомендаций по бюджету: ${res.budget_recs ?? 0}`,
+        );
       } else {
         message.warning("AI-интеграция не подключена — генерация пропущена");
       }
@@ -343,7 +345,7 @@ export default function IntegrationsPage() {
                 <b>Сгенерировать AI-советы и отчёты</b>
                 <span>
                   {cfg.ai_configured
-                    ? "Запускает генерацию инсайтов через подключённую AI-интеграцию."
+                    ? "Запускает генерацию инсайтов и рекомендаций по бюджету (раздел ROMI) через подключённую AI-интеграцию."
                     : "Недоступно: подключите AI-интеграцию (API-ключ и Base URL LLM) ниже."}
                 </span>
               </div>

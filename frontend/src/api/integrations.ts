@@ -67,6 +67,8 @@ export interface RecomputeStatus {
 export interface AiGenerateResult {
   generated: boolean;
   count?: number;
+  insights?: number;
+  budget_recs?: number;
   reason?: string;
 }
 
