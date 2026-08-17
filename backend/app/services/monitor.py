@@ -9,6 +9,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from starlette.concurrency import run_in_threadpool
 
 from app.integrations import factory
 from app.models import Deal, Task
@@ -73,9 +74,13 @@ async def create_task_for(session: AsyncSession, ref: str) -> dict:
     config = await content.regulation(session)
     params = tasks_engine.build_task(deal, config)
 
-    # Постановка в Битрикс24 (мок в dev; боевой адаптер — Этап E).
-    factory.get_bitrix24().create_task({
-        "deal_ref": deal.ref, "title": params["title"], "assignee": params["assignee"],
+    # Постановка в Битрикс24. Ошибка адаптера (нет ответственного, отказ портала,
+    # сеть) пробрасывается наверх — локальную задачу при этом НЕ фиксируем, чтобы
+    # интерфейс не показывал ложный успех, когда в Битриксе задача не создана.
+    result = await run_in_threadpool(factory.get_bitrix24().create_task, {
+        "deal_ref": deal.ref, "deal_external_id": deal.external_id,
+        "title": params["title"], "assignee": params["assignee"],
+        "assignee_id": params["assignee_id"], "due_at": params["due_at"],
     })
     deal.tasks.append(Task(
         title=params["title"], assignee=params["assignee"],
@@ -85,4 +90,5 @@ async def create_task_for(session: AsyncSession, ref: str) -> dict:
     return {
         "ok": True, "deal": deal.name, "ref": deal.ref,
         "assignee": params["assignee"], "title": params["title"], "due": params["due_label"],
+        "external_id": result.get("external_id"),
     }

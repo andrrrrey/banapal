@@ -53,7 +53,7 @@ export default function MonitorPage() {
         setDone((prev) => new Set(prev).add(ref));
         message.success(`Задача создана в Битрикс24 · ${res.assignee}`);
       },
-      onError: () => message.error("Не удалось создать задачу"),
+      onError: (e) => message.error((e as Error).message || "Не удалось создать задачу"),
     });
   };
 

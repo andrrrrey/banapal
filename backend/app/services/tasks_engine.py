@@ -40,6 +40,9 @@ def build_task(deal: Deal, config: dict) -> dict:
     due_label = due_at.strftime("%d.%m %H:%M")
     return {
         "assignee": resolve_assignee(deal, task_logic),
+        # ID ответственного в Битрикс24 — задача ставится ответственному по сделке.
+        "assignee_id": deal.mgr_id,
+        "deal_external_id": deal.external_id,
         "title": render_text(deal, template, due_label),
         "due_at": due_at,
         "due_label": due_label,
