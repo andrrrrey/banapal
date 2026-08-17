@@ -24,12 +24,16 @@ class Deal(Base):
     # Показывать в таблице лидов дашборда (мониторинг оценивает все сделки).
     on_dashboard: Mapped[bool] = mapped_column(Boolean, default=True)
     ref: Mapped[str] = mapped_column(String(48), default="")  # «Лид #4821» / «Сделка #3390»
+    # Идентификатор сделки в Битрикс24 (для привязки задачи к сделке — UF_CRM_TASK).
+    external_id: Mapped[str | None] = mapped_column(String(48), nullable=True)
 
     name: Mapped[str] = mapped_column(String(255))
     src: Mapped[str] = mapped_column(String(64))
     campaign: Mapped[str | None] = mapped_column(String(128), nullable=True)
     utm: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mgr: Mapped[str] = mapped_column(String(128))
+    # ID ответственного в Битрикс24 (ASSIGNED_BY_ID) — для RESPONSIBLE_ID задачи.
+    mgr_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     status_label: Mapped[str] = mapped_column(String(64))
     status_class: Mapped[str] = mapped_column(String(32))

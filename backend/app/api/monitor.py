@@ -40,3 +40,9 @@ async def post_task(
         return await monitor.create_task_for(session, ref)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — отказ Битрикс24/сети → 502 с причиной
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Не удалось создать задачу в Битрикс24: {exc}",
+        ) from exc

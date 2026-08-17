@@ -173,18 +173,43 @@ class RealBitrix24Adapter:
         return _call("tasks.task.list", {})
 
     def create_task(self, payload: dict) -> dict:
+        # RESPONSIBLE_ID обязателен для tasks.task.add — без него Битрикс отклоняет
+        # запрос. Берём ID ответственного по сделке (ASSIGNED_BY_ID).
+        responsible = payload.get("assignee_id")
+        if not responsible:
+            raise RuntimeError(
+                "Не удалось определить ответственного в Битрикс24 (ASSIGNED_BY_ID). "
+                "Проверьте, что у сделки задан ответственный, и выполните пересчёт."
+            )
         fields: dict[str, Any] = {
             "TITLE": payload.get("title", "Задача по сделке"),
-            "RESPONSIBLE_ID": payload.get("assignee_id"),
+            "RESPONSIBLE_ID": responsible,
         }
         deal_ref = payload.get("deal_ref")
         if deal_ref:
             fields["DESCRIPTION"] = f"Сделка: {deal_ref}"
+        # Привязка к сделке — задача появляется в карточке сделки (вкладка «Дела»).
+        deal_id = payload.get("deal_external_id")
+        if deal_id:
+            fields["UF_CRM_TASK"] = [f"D_{deal_id}"]
+        due_at = payload.get("due_at")
+        if due_at is not None and hasattr(due_at, "isoformat"):
+            fields["DEADLINE"] = due_at.isoformat()
+
         with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
             resp = request(
                 "POST", f"{_base()}/tasks.task.add.json", client=client,
                 json={"fields": fields},
             )
-        result = resp.json().get("result", {})
+        data = resp.json()
+        # Битрикс отдаёт HTTP 200 даже при отказе — проверяем поле error, иначе
+        # интерфейс покажет ложный успех.
+        if isinstance(data, dict) and data.get("error"):
+            msg = data.get("error_description") or data.get("error")
+            raise RuntimeError(f"Битрикс24 отклонил создание задачи: {msg}")
+        result = data.get("result", {})
         task = result.get("task", {}) if isinstance(result, dict) else {}
-        return {"ok": True, "external_id": task.get("id"), "mock": False}
+        task_id = task.get("id")
+        if not task_id:
+            raise RuntimeError("Битрикс24 не вернул идентификатор созданной задачи.")
+        return {"ok": True, "external_id": task_id, "mock": False}
