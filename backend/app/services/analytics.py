@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.models import Channel, MinusWord
 from app.seeds.chain import CHAIN_STEPS
+from app.services import channels as ch_svc
 from app.services import format as f
 
 
@@ -66,36 +67,71 @@ def _spend_display(spend: int | None) -> str:
     return f.money(spend)
 
 
-async def channels_table(session: AsyncSession, channel: str = "all") -> list[dict]:
-    chs = await _channels(session)
-    if channel and channel != "all":
-        chs = [c for c in chs if c.name == channel]
+def _row(name: str, spend: int | None, leads: int, deals: int, payments: int,
+         revenue: int, margin: int, *, campaign: bool = False) -> dict:
+    """Строка сводки (канал или кампания) с готовыми к выводу значениями.
 
+    У кампаний нулевой/неизвестный расход показывается прочерком (как в прототипе),
+    у каналов — развёрнуто («0 ₽» для бесплатного канала, «нет данных» без источника).
+    """
+    return {
+        "name": name, "spend": spend,
+        "spend_display": (f.money(spend) if spend else "—") if campaign
+                         else _spend_display(spend),
+        "leads": leads, "deals": deals, "payments": payments,
+        "revenue": revenue, "revenue_display": f.money(revenue),
+        "margin": margin, "margin_display": f.money(margin),
+        "romi": f.romi_tag(spend, margin),
+        "action": f.action_of(name, spend, margin),
+    }
+
+
+async def _stored_table(session: AsyncSession) -> list[dict]:
+    """Сводка из сохранённых витрин (демо-режим и данные до посуточной выгрузки)."""
     out = []
-    for c in chs:
-        campaigns = [
-            {
-                "name": k.name, "spend": k.spend,
-                "spend_display": f.money(k.spend) if k.spend else "—",
-                "leads": k.leads, "deals": k.deals, "payments": k.payments,
-                "revenue": k.revenue, "revenue_display": f.money(k.revenue),
-                "margin": k.margin, "margin_display": f.money(k.margin),
-                "romi": f.romi_tag(k.spend, k.margin),
-                "action": f.action_of(k.name, k.spend, k.margin),
-            }
+    for c in await _channels(session):
+        row = _row(c.name, c.spend, c.leads, c.deals, c.payments, c.revenue, c.margin)
+        row["color"] = c.color
+        row["campaigns"] = [
+            _row(k.name, k.spend, k.leads, k.deals, k.payments, k.revenue, k.margin,
+                 campaign=True)
             for k in c.campaigns
         ]
-        out.append({
-            "name": c.name, "color": c.color, "spend": c.spend,
-            "spend_display": _spend_display(c.spend),
-            "leads": c.leads, "deals": c.deals, "payments": c.payments,
-            "revenue": c.revenue, "revenue_display": f.money(c.revenue),
-            "margin": c.margin, "margin_display": f.money(c.margin),
-            "romi": f.romi_tag(c.spend, c.margin),
-            "action": f.action_of(c.name, c.spend, c.margin),
-            "campaigns": campaigns,
-        })
+        out.append(row)
     return out
+
+
+async def channels_table(
+    session: AsyncSession, channel: str = "all", period: str = "30"
+) -> list[dict]:
+    """Сводка по каналам и кампаниям за выбранный период.
+
+    В боевом режиме пересобирается из посуточного расхода Директа и сделок за тот
+    же период — иначе таблица оставалась итогом за всё окно выгрузки и не менялась
+    при переключении «сегодня / 7 дней / 30 дней / квартал».
+    """
+    rebuilt = (
+        await ch_svc.for_period(session, period)
+        if settings.data_source == "real" else None
+    )
+    if rebuilt is None:
+        rows = await _stored_table(session)
+    else:
+        rows = []
+        for c in rebuilt:
+            row = _row(c["name"], c["spend"], c["leads"], c["deals"], c["payments"],
+                       c["revenue"], c["margin"])
+            row["color"] = c["color"]
+            row["campaigns"] = [
+                _row(k["name"], k["spend"], k["leads"], k["deals"], k["payments"],
+                     k["revenue"], k["margin"], campaign=True)
+                for k in c["campaigns"]
+            ]
+            rows.append(row)
+
+    if channel and channel != "all":
+        rows = [r for r in rows if r["name"] == channel]
+    return rows
 
 
 async def romi_channels_chart(session: AsyncSession) -> list[dict]:

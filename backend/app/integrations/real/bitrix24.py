@@ -46,6 +46,26 @@ def _call(method: str, params: dict | None = None) -> list[dict]:
     return out
 
 
+def _rest(method: str, payload: dict) -> Any:
+    """Одиночный REST-вызов с проверкой конверта ошибки.
+
+    Битрикс24 отвечает HTTP 200 и при отказе (ошибка лежит в теле), поэтому без
+    разбора конверта интерфейс показывал бы успех на несозданной задаче.
+    """
+    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+        resp = request("POST", f"{_base()}/{method}.json", client=client, json=payload)
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Битрикс24 вернул не-JSON на {method} (HTTP {resp.status_code})"
+        ) from exc
+    if isinstance(data, dict) and data.get("error"):
+        msg = data.get("error_description") or data.get("error")
+        raise RuntimeError(f"Битрикс24 отклонил {method}: {msg}")
+    return data.get("result") if isinstance(data, dict) else None
+
+
 def _coerce(value: Any) -> str:
     """Значение пользовательского поля Битрикс → строка (список → через запятую)."""
     if value is None:
@@ -132,12 +152,32 @@ class RealBitrix24Adapter:
         return out
 
     def fetch_stages(self) -> list[dict]:
-        """Справочник стадий воронки: [{"id", "name"}] для резолва STAGE_ID → название."""
+        """Справочник стадий воронки: [{"id", "name"}] для резолва STAGE_ID → название.
+
+        Фильтр по ENTITY_ID обязателен: crm.status.list отдаёт единым списком все
+        справочники портала (стадии, источники, типы), и без фильтра STATUS_ID
+        источника мог перекрыть одноимённый код стадии.
+        """
         raw = _call("crm.status.list", {})
         out: list[dict] = []
         for s in raw:
             sid = s.get("STATUS_ID")
-            if sid:
+            entity = str(s.get("ENTITY_ID") or "")
+            # Стадии основной воронки — DEAL_STAGE, дополнительных — DEAL_STAGE_<id>.
+            if sid and entity.startswith("DEAL_STAGE"):
+                out.append({"id": str(sid), "name": s.get("NAME") or str(sid)})
+        return out
+
+    def fetch_sources(self) -> list[dict]:
+        """Справочник источников: [{"id", "name"}] для резолва SOURCE_ID → название.
+
+        Без него на дашборде источник сделки показывается служебным кодом портала
+        («site», «CALL»), по которому фильтр не читается."""
+        raw = _call("crm.status.list", {})
+        out: list[dict] = []
+        for s in raw:
+            sid = s.get("STATUS_ID")
+            if sid and str(s.get("ENTITY_ID") or "") == "SOURCE":
                 out.append({"id": str(sid), "name": s.get("NAME") or str(sid)})
         return out
 
@@ -173,6 +213,13 @@ class RealBitrix24Adapter:
         return _call("tasks.task.list", {})
 
     def create_task(self, payload: dict) -> dict:
+        """Ставит задачу ответственному и заводит «Дело» в карточке сделки.
+
+        Задача (tasks.task.add) живёт в разделе «Задачи» и привязывается к сделке
+        через UF_CRM_TASK. Но в карточке сделки менеджер смотрит на таймлайн
+        «Дела», где задача сама по себе не появляется, — поэтому дополнительно
+        создаём CRM-дело (crm.activity.todo.add) с тем же сроком и текстом.
+        """
         # RESPONSIBLE_ID обязателен для tasks.task.add — без него Битрикс отклоняет
         # запрос. Берём ID ответственного по сделке (ASSIGNED_BY_ID).
         responsible = payload.get("assignee_id")
@@ -181,35 +228,60 @@ class RealBitrix24Adapter:
                 "Не удалось определить ответственного в Битрикс24 (ASSIGNED_BY_ID). "
                 "Проверьте, что у сделки задан ответственный, и выполните пересчёт."
             )
-        fields: dict[str, Any] = {
-            "TITLE": payload.get("title", "Задача по сделке"),
-            "RESPONSIBLE_ID": responsible,
-        }
-        deal_ref = payload.get("deal_ref")
-        if deal_ref:
-            fields["DESCRIPTION"] = f"Сделка: {deal_ref}"
-        # Привязка к сделке — задача появляется в карточке сделки (вкладка «Дела»).
         deal_id = payload.get("deal_external_id")
-        if deal_id:
-            fields["UF_CRM_TASK"] = [f"D_{deal_id}"]
-        due_at = payload.get("due_at")
-        if due_at is not None and hasattr(due_at, "isoformat"):
-            fields["DEADLINE"] = due_at.isoformat()
-
-        with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
-            resp = request(
-                "POST", f"{_base()}/tasks.task.add.json", client=client,
-                json={"fields": fields},
+        if not deal_id:
+            raise RuntimeError(
+                "У сделки не сохранён идентификатор Битрикс24 — задачу некуда "
+                "привязать. Выполните пересчёт на странице «Интеграции»."
             )
-        data = resp.json()
-        # Битрикс отдаёт HTTP 200 даже при отказе — проверяем поле error, иначе
-        # интерфейс покажет ложный успех.
-        if isinstance(data, dict) and data.get("error"):
-            msg = data.get("error_description") or data.get("error")
-            raise RuntimeError(f"Битрикс24 отклонил создание задачи: {msg}")
-        result = data.get("result", {})
+
+        title = payload.get("title", "Задача по сделке")
+        deal_ref = payload.get("deal_ref")
+        description = f"Сделка: {deal_ref}" if deal_ref else ""
+        due_at = payload.get("due_at")
+        deadline = due_at.isoformat() if hasattr(due_at, "isoformat") else None
+
+        fields: dict[str, Any] = {
+            "TITLE": title,
+            "RESPONSIBLE_ID": responsible,
+            # Привязка к сделке — задача видна в карточке сделки, вкладка «Задачи».
+            "UF_CRM_TASK": [f"D_{deal_id}"],
+        }
+        if description:
+            fields["DESCRIPTION"] = description
+        if deadline:
+            fields["DEADLINE"] = deadline
+
+        result = _rest("tasks.task.add", {"fields": fields})
         task = result.get("task", {}) if isinstance(result, dict) else {}
         task_id = task.get("id")
         if not task_id:
             raise RuntimeError("Битрикс24 не вернул идентификатор созданной задачи.")
-        return {"ok": True, "external_id": task_id, "mock": False}
+
+        activity_id = self._add_deal_activity(
+            deal_id=deal_id, responsible=responsible, title=title,
+            description=description, deadline=deadline,
+        )
+        return {
+            "ok": True, "external_id": task_id, "activity_id": activity_id, "mock": False,
+        }
+
+    def _add_deal_activity(
+        self, *, deal_id: str, responsible: str, title: str,
+        description: str, deadline: str | None,
+    ) -> str | None:
+        """Создаёт «Дело» в таймлайне сделки (ownerTypeId=2 — сделка)."""
+        params: dict[str, Any] = {
+            "ownerTypeId": 2,
+            "ownerId": deal_id,
+            "title": title,
+            "responsibleId": responsible,
+        }
+        if description:
+            params["description"] = description
+        if deadline:
+            params["deadline"] = deadline
+        result = _rest("crm.activity.todo.add", params)
+        if isinstance(result, dict):
+            return str(result.get("id") or "") or None
+        return str(result) if result else None

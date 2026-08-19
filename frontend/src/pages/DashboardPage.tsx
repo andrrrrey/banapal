@@ -27,13 +27,15 @@ function ChartCard({ title, sub, children }: { title: string; sub: string; child
 
 export default function DashboardPage() {
   const f = useFilters();
-  const kpis = useKpis(f.period);
-  const attention = useAttention();
-  const funnel = useFunnel(f.period);
-  const sources = useSources();
-  const revenue = useRevenueSeries(f.period);
-  const romi = useRomiByChannel();
-  const managers = useManagers();
+  // Все витрины дашборда следуют одному набору фильтров панели.
+  const q = { period: f.period, mgr: f.mgr, source: f.source };
+  const kpis = useKpis(q);
+  const attention = useAttention(q);
+  const funnel = useFunnel(q);
+  const sources = useSources(q);
+  const revenue = useRevenueSeries(q);
+  const romi = useRomiByChannel(q);
+  const managers = useManagers(q);
   const leads = useLeads(f.mgr, f.source, f.leadFilter, f.period);
 
   return (
@@ -45,7 +47,7 @@ export default function DashboardPage() {
         <ChartCard title="Воронка обработки" sub="лид → квалификация → сделка → счёт → оплата">
           {funnel.data ? <EChart option={funnelOption(funnel.data)} height={280} /> : <Spin />}
         </ChartCard>
-        <ChartCard title="Источники лидов" sub="по каналам">
+        <ChartCard title="Источники лидов" sub="по источнику сделки">
           {sources.data ? <EChart option={donutOption(sources.data)} height={280} /> : <Spin />}
         </ChartCard>
       </div>

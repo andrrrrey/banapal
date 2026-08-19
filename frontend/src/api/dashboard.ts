@@ -51,7 +51,19 @@ export interface Lead {
   risk: string | null; tags: string[]; ai: string; reason: string;
 }
 
-const P = (period: string) => `?period=${encodeURIComponent(period)}`;
+// Фильтры панели дашборда: период + менеджер + источник. Витрины принимают их
+// целиком — иначе выпадающие списки не влияли ни на что, кроме таблицы лидов.
+export interface DashFilters { period: string; mgr: string; source: string; }
+
+const qs = (f: DashFilters) => {
+  const q = new URLSearchParams({ period: f.period });
+  if (f.mgr && f.mgr !== "all") q.set("mgr", f.mgr);
+  if (f.source && f.source !== "all") q.set("source", f.source);
+  return `?${q.toString()}`;
+};
+
+// Ключ кэша запроса: меняется вместе с любым из фильтров.
+const key = (f: DashFilters) => [f.period, f.mgr, f.source];
 
 export interface FilterOptions { managers: string[]; channels: string[]; sources: string[]; }
 
@@ -62,26 +74,37 @@ export const useFilterOptions = () =>
     staleTime: 60_000,
   });
 
-export const useKpis = (period: string) =>
-  useQuery<Kpi[]>({ queryKey: ["dashboard", "kpis", period], queryFn: () => api.get(`/dashboard/kpis${P(period)}`) });
+export const useKpis = (f: DashFilters) =>
+  useQuery<Kpi[]>({ queryKey: ["dashboard", "kpis", ...key(f)], queryFn: () => api.get(`/dashboard/kpis${qs(f)}`) });
 
-export const useAttention = () =>
-  useQuery<Attention>({ queryKey: ["dashboard", "attention"], queryFn: () => api.get("/dashboard/attention") });
+export const useAttention = (f: DashFilters) =>
+  useQuery<Attention>({
+    queryKey: ["dashboard", "attention", f.mgr, f.source],
+    // Триаж показывает состояние «сейчас» — период к нему не применяется,
+    // но менеджер и источник сужают выборку.
+    queryFn: () => {
+      const q = new URLSearchParams();
+      if (f.mgr && f.mgr !== "all") q.set("mgr", f.mgr);
+      if (f.source && f.source !== "all") q.set("source", f.source);
+      const s = q.toString();
+      return api.get(`/dashboard/attention${s ? `?${s}` : ""}`);
+    },
+  });
 
-export const useFunnel = (period: string) =>
-  useQuery<FunnelStage[]>({ queryKey: ["dashboard", "funnel", period], queryFn: () => api.get(`/dashboard/funnel${P(period)}`) });
+export const useFunnel = (f: DashFilters) =>
+  useQuery<FunnelStage[]>({ queryKey: ["dashboard", "funnel", ...key(f)], queryFn: () => api.get(`/dashboard/funnel${qs(f)}`) });
 
-export const useSources = () =>
-  useQuery<Source[]>({ queryKey: ["dashboard", "sources"], queryFn: () => api.get("/dashboard/sources") });
+export const useSources = (f: DashFilters) =>
+  useQuery<Source[]>({ queryKey: ["dashboard", "sources", ...key(f)], queryFn: () => api.get(`/dashboard/sources${qs(f)}`) });
 
-export const useRevenueSeries = (period: string) =>
-  useQuery<RevenueSeries>({ queryKey: ["dashboard", "revenue", period], queryFn: () => api.get(`/dashboard/revenue-series${P(period)}`) });
+export const useRevenueSeries = (f: DashFilters) =>
+  useQuery<RevenueSeries>({ queryKey: ["dashboard", "revenue", ...key(f)], queryFn: () => api.get(`/dashboard/revenue-series${qs(f)}`) });
 
-export const useRomiByChannel = () =>
-  useQuery<RomiByChannel[]>({ queryKey: ["dashboard", "romi-by-channel"], queryFn: () => api.get("/dashboard/romi-by-channel") });
+export const useRomiByChannel = (f: DashFilters) =>
+  useQuery<RomiByChannel[]>({ queryKey: ["dashboard", "romi-by-channel", ...key(f)], queryFn: () => api.get(`/dashboard/romi-by-channel${qs(f)}`) });
 
-export const useManagers = () =>
-  useQuery<Manager[]>({ queryKey: ["dashboard", "managers"], queryFn: () => api.get("/dashboard/managers") });
+export const useManagers = (f: DashFilters) =>
+  useQuery<Manager[]>({ queryKey: ["dashboard", "managers", ...key(f)], queryFn: () => api.get(`/dashboard/managers${qs(f)}`) });
 
 export const useLeads = (mgr: string, source: string, risk: string | null, period: string) =>
   useQuery<Lead[]>({

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.models import (
+    AdCost,
     AiInsight,
     Baseline,
     BudgetRec,
@@ -28,6 +29,7 @@ from app.models import (
     StageHistory,
     Task,
     Violation,
+    Visit,
 )
 
 logger = get_logger("banapal.data_mode")
@@ -39,6 +41,9 @@ _PURGE_ORDER = [
     StageHistory, Task, Payment, Call, Campaign,
     Deal, Channel, Violation, ManagerControl, Baseline,
     AiInsight, BudgetRec, MinusWord, Product,
+    # Посуточное сырьё источников: при смене режима оно устаревает вместе с
+    # витринами, иначе расход/визиты «чужого» режима попадут в показатели.
+    AdCost, Visit,
 ]
 
 # Таблицы без реального источника выгрузки: в боевом режиме всегда пусты, пока

@@ -28,8 +28,12 @@ export const useChain = (period: string) =>
     queryFn: () => api.get(`/analytics/chain?period=${encodeURIComponent(period)}`),
   });
 
-export const useChannels = (channel: string) =>
+export const useChannels = (channel: string, period: string) =>
   useQuery<ChannelRow[]>({
-    queryKey: ["analytics", "channels", channel],
-    queryFn: () => api.get(`/analytics/channels?channel=${encodeURIComponent(channel)}`),
+    queryKey: ["analytics", "channels", channel, period],
+    queryFn: () =>
+      api.get(
+        `/analytics/channels?channel=${encodeURIComponent(channel)}` +
+          `&period=${encodeURIComponent(period)}`,
+      ),
   });

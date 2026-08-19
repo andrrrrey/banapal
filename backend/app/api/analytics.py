@@ -23,6 +23,8 @@ async def get_chain(
 
 @router.get("/channels")
 async def get_channels(
-    channel: str = "all", session: AsyncSession = Depends(get_session)
+    channel: str = "all",
+    period: str = "30",
+    session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    return await analytics.channels_table(session, channel=channel)
+    return await analytics.channels_table(session, channel=channel, period=period)

@@ -9,7 +9,7 @@ import { useFilters } from "@/state/filters";
 export default function AnalyticsPage() {
   const f = useFilters();
   const chain = useChain(f.period);
-  const channels = useChannels(f.channel);
+  const channels = useChannels(f.channel, f.period);
 
   return (
     <>

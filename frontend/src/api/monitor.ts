@@ -52,13 +52,20 @@ export function useReview() {
   });
 }
 
+export interface CreatedTask {
+  assignee: string;
+  title: string;
+  due: string;
+  // ID задачи и «дела» в Битрикс24; mock=true — демо-режим, в портал ничего не ушло.
+  external_id: string | null;
+  activity_id: string | null;
+  mock: boolean;
+}
+
 export function useCreateTask() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (ref: string) => api.post<{ assignee: string; title: string; due: string }>(
-      "/monitor/task",
-      { ref },
-    ),
+    mutationFn: (ref: string) => api.post<CreatedTask>("/monitor/task", { ref }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["monitor"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });

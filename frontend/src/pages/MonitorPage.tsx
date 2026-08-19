@@ -51,7 +51,16 @@ export default function MonitorPage() {
     createTask.mutate(ref, {
       onSuccess: (res) => {
         setDone((prev) => new Set(prev).add(ref));
-        message.success(`Задача создана в Битрикс24 · ${res.assignee}`);
+        // В демо-режиме в портал ничего не уходит — не выдаём это за созданную задачу.
+        if (res.mock) {
+          message.warning(
+            `Демо-режим: задача записана локально, в Битрикс24 не создана · ${res.assignee}`,
+          );
+          return;
+        }
+        message.success(
+          `Задача и дело созданы в сделке Битрикс24 · ${res.assignee}`,
+        );
       },
       onError: (e) => message.error((e as Error).message || "Не удалось создать задачу"),
     });

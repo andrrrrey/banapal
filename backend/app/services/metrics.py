@@ -2,26 +2,70 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models import Baseline, Channel, Deal, KpiCard, ManagerControl
+from app.models import AdCost, Baseline, Channel, Deal, KpiCard, ManagerControl, Visit
 from app.services import format as f
 from app.services import period as per
 from app.services import romi as romi_svc
 
-# Длительность периодов (дней) для реальной фильтрации по датам.
-_PERIOD_DAYS = {"today": 1, "7": 7, "30": 30, "quarter": 90}
-
 
 def _period_start(period: str | None, now: datetime) -> datetime:
-    p = per.norm_period(period)
-    if p == "today":
-        return now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return now - timedelta(days=_PERIOD_DAYS[p])
+    return per.start(period, now)
+
+
+def _by_deal_filters(stmt, mgr: str = "all", source: str = "all"):
+    """Фильтры дашборда «менеджер» и «источник» на выборку сделок."""
+    if mgr and mgr != "all":
+        stmt = stmt.where(Deal.mgr == mgr)
+    if source and source != "all":
+        stmt = stmt.where(Deal.src == source)
+    return stmt
+
+
+async def _ad_totals(session: AsyncSession, period: str) -> dict[str, float]:
+    """Расход/клики (Директ) и визиты (Метрика) за период из посуточного сырья.
+
+    Рекламные показатели не разрезаются фильтрами «менеджер»/«источник»: расход
+    относится к кампании, а не к ответственному, а таксономия источников Метрики
+    не совпадает с SOURCE_ID Битрикс24 — смешивать их было бы неверно.
+
+    Пока посуточного сырья нет (пересчёт не выполнялся после обновления), берём
+    сохранённые итоги последнего пересчёта — иначе показатели обнулились бы.
+    """
+    start = _period_start(period, datetime.now(UTC))
+    spend, clicks = (await session.execute(
+        select(
+            func.coalesce(func.sum(AdCost.spend), 0),
+            func.coalesce(func.sum(AdCost.clicks), 0),
+        ).where(AdCost.date.is_not(None), AdCost.date >= start)
+    )).one()
+    visits = (await session.execute(
+        select(func.coalesce(func.sum(Visit.visits), 0))
+        .where(Visit.date.is_not(None), Visit.date >= start)
+    )).scalar() or 0
+
+    has_costs = bool(await session.scalar(select(func.count()).select_from(AdCost)))
+    has_visits = bool(await session.scalar(select(func.count()).select_from(Visit)))
+    if has_costs and has_visits:
+        return {"spend": float(spend), "clicks": float(clicks), "visits": float(visits)}
+
+    # Резерв на данных прошлых версий: итоги каналов и базлайна за всё окно.
+    legacy_spend = int((await session.execute(
+        select(func.coalesce(func.sum(Channel.spend), 0))
+    )).scalar() or 0)
+    legacy = dict((await session.execute(
+        select(Baseline.key, Baseline.value).where(Baseline.key.in_(["clicks", "visits"]))
+    )).all())
+    return {
+        "spend": float(spend) if has_costs else float(legacy_spend),
+        "clicks": float(clicks) if has_costs else float(legacy.get("clicks", 0)),
+        "visits": float(visits) if has_visits else float(legacy.get("visits", 0)),
+    }
 
 
 def _num(value: object) -> float:
@@ -34,19 +78,31 @@ def _num(value: object) -> float:
         return 0.0
 
 
-async def _period_baseline(session: AsyncSession, period: str) -> dict[str, float]:
+async def period_deals(
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+) -> list[Deal]:
+    """Сделки дашборда за период с учётом фильтров «менеджер» и «источник»."""
+    start = _period_start(period, datetime.now(UTC))
+    stmt = select(Deal).where(
+        Deal.on_dashboard.is_(True),
+        Deal.created_at.is_not(None),
+        Deal.created_at >= start,
+    )
+    return list((await session.execute(
+        _by_deal_filters(stmt, mgr, source)
+    )).scalars().all())
+
+
+async def _period_baseline(
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+) -> dict[str, float]:
     """Реальные KPI за период — по сделкам с created_at в интервале (боевой режим).
 
     Выигранные сделки определяются по status_class == 'st-ok' (семантика успеха).
-    Маржа считается только если сопоставлено поле себестоимости (иначе 0)."""
-    start = _period_start(period, datetime.now(UTC))
-    rows = (await session.execute(
-        select(Deal).where(
-            Deal.on_dashboard.is_(True),
-            Deal.created_at.is_not(None),
-            Deal.created_at >= start,
-        )
-    )).scalars().all()
+    Маржа считается только если сопоставлено поле себестоимости (иначе 0).
+    Фильтры «менеджер»/«источник» сужают выборку сделок; рекламные показатели
+    (расход/клики/визиты) от них не зависят — см. _ad_totals."""
+    rows = await period_deals(session, period, mgr, source)
     won = [d for d in rows if d.status_class == "st-ok"]
     revenue = sum(int(d.amount or 0) for d in won)
 
@@ -59,14 +115,8 @@ async def _period_baseline(session: AsyncSession, period: str) -> dict[str, floa
     else:
         margin = 0
 
-    # Расход — общий по каналам (посуточной атрибуции расхода нет).
-    spend = int((await session.execute(
-        select(func.coalesce(func.sum(Channel.spend), 0))
-    )).scalar() or 0)
-    # Клики (Директ) и визиты (Метрика) — 30-дневные итоги из базлайна.
-    ad = dict((await session.execute(
-        select(Baseline.key, Baseline.value).where(Baseline.key.in_(["clicks", "visits"]))
-    )).all())
+    # Расход/клики/визиты — из посуточного сырья источников за тот же период.
+    ad = await _ad_totals(session, period)
 
     return {
         "leads": float(len(rows)),
@@ -76,19 +126,21 @@ async def _period_baseline(session: AsyncSession, period: str) -> dict[str, floa
         "payments": float(len(won)),
         "revenue": float(revenue),
         "margin": float(margin),
-        "spend": float(spend),
-        "clicks": float(ad.get("clicks", 0)),
-        "visits": float(ad.get("visits", 0)),
+        "spend": ad["spend"],
+        "clicks": ad["clicks"],
+        "visits": ad["visits"],
         "first_contact": 0.0,
         "overdue": 0.0,
     }
 
 
-async def _base_and_mult(session: AsyncSession, period: str) -> tuple[dict[str, float], float]:
+async def _base_and_mult(
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+) -> tuple[dict[str, float], float]:
     """Базлайн и множитель: боевой режим — реальная фильтрация по датам (mult=1),
     демо — сохранённый сид × коэффициент периода (как в прототипе)."""
     if settings.data_source == "real":
-        return await _period_baseline(session, period), 1.0
+        return await _period_baseline(session, period, mgr, source), 1.0
     return await _baselines(session), per.mult(period)
 
 
@@ -102,16 +154,17 @@ def _minutes(value: float) -> str:
     return f"{text} мин"
 
 
-async def kpis(session: AsyncSession, period: str) -> list[dict]:
-    base, m = await _base_and_mult(session, period)
+async def kpis(
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+) -> list[dict]:
+    base, m = await _base_and_mult(session, period, mgr, source)
     cards = (await session.execute(select(KpiCard).order_by(KpiCard.position))).scalars().all()
     # В боевом режиме демо-дельты и спарклайны из сида не показываем — только
     # реальные значения (тренд формируется на этапе накопления истории).
     real = settings.data_source == "real"
-    # Каналы нужны для реального ROMI (карта с static_value в прототипе — «+197%»).
-    channels_rows = (
-        (await session.execute(select(Channel))).scalars().all() if real else []
-    )
+    # Каналы нужны для реального ROMI (карта с static_value в прототипе — «+197%»),
+    # и считаются за выбранный период — иначе ROMI не отвечает на переключатель.
+    channels_rows = await _period_channels(session, period, mgr, source) if real else []
 
     out: list[dict] = []
     for c in cards:
@@ -120,8 +173,8 @@ async def kpis(session: AsyncSession, period: str) -> list[dict]:
             if real:
                 # Не показываем демо-строку: считаем ROMI из каналов, иначе «—».
                 r = romi_svc.romi(
-                    sum(ch.margin for ch in channels_rows),
-                    sum(ch.spend for ch in channels_rows),
+                    sum(int(ch["margin"] or 0) for ch in channels_rows),
+                    sum(int(ch["spend"] or 0) for ch in channels_rows),
                 ) if c.key == "romi" else None
                 display = f"{r:+d}%" if r is not None else "—"
             else:
@@ -164,8 +217,10 @@ async def filter_options(session: AsyncSession) -> dict:
     }
 
 
-async def funnel(session: AsyncSession, period: str) -> list[dict]:
-    base, m = await _base_and_mult(session, period)
+async def funnel(
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+) -> list[dict]:
+    base, m = await _base_and_mult(session, period, mgr, source)
     stages = [
         ("leads", "Лиды"), ("qual", "Квалификация"), ("deals", "Сделки"),
         ("invoices", "Счета"), ("payments", "Оплаты"),
@@ -173,16 +228,43 @@ async def funnel(session: AsyncSession, period: str) -> list[dict]:
     return [{"label": label, "value": round(base.get(key, 0) * m)} for key, label in stages]
 
 
-async def sources(session: AsyncSession) -> list[dict]:
-    chs = (await session.execute(select(Channel).order_by(Channel.position))).scalars().all()
+# Палитра для источников лидов (SOURCE_ID Битрикс24 — произвольный справочник).
+_SOURCE_COLORS = ["#635BFF", "#9E77ED", "#1BA9C7", "#12B76A", "#F79009", "#F04438", "#8E96AD"]
+
+
+async def sources(
+    session: AsyncSession, period: str = per.DEFAULT_PERIOD,
+    mgr: str = "all", source: str = "all",
+) -> list[dict]:
+    """Источники лидов за период.
+
+    В боевом режиме считаем по источнику сделки (SOURCE_ID Битрикс24): так
+    диаграмма охватывает все сделки, отвечает на переключатель периода и на
+    фильтры дашборда. В демо — сохранённые каналы прототипа."""
+    if settings.data_source != "real":
+        chs = (await session.execute(select(Channel).order_by(Channel.position))).scalars().all()
+        return [
+            {"name": c.name, "short_name": f.short_channel(c.name),
+             "color": c.color, "leads": c.leads}
+            for c in chs
+        ]
+
+    deals = await period_deals(session, period, mgr, source)
+    counts: dict[str, int] = {}
+    for d in deals:
+        counts[d.src or "—"] = counts.get(d.src or "—", 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     return [
-        {"name": c.name, "short_name": f.short_channel(c.name), "color": c.color, "leads": c.leads}
-        for c in chs
+        {"name": name, "short_name": f.short_channel(name),
+         "color": _SOURCE_COLORS[i % len(_SOURCE_COLORS)], "leads": n}
+        for i, (name, n) in enumerate(ordered)
     ]
 
 
-async def revenue_series(session: AsyncSession, period: str) -> dict:
-    base, m = await _base_and_mult(session, period)
+async def revenue_series(
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+) -> dict:
+    base, m = await _base_and_mult(session, period, mgr, source)
     days = ["09", "11", "13", "15", "17"] if per.norm_period(period) == "today" \
         else ["1", "5", "10", "15", "20", "25", "30"]
     total_rev = base.get("revenue", 0) * m
@@ -199,27 +281,56 @@ async def revenue_series(session: AsyncSession, period: str) -> dict:
     return {"days": days, "revenue": revenue, "margin": margin}
 
 
-async def romi_by_channel(session: AsyncSession) -> list[dict]:
-    chs = (await session.execute(select(Channel).order_by(Channel.position))).scalars().all()
+async def _period_channels(
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+) -> list[dict]:
+    """Каналы за период (посуточное сырьё) либо сохранённые строки как резерв."""
+    from app.services import channels as ch_svc
+
+    rebuilt = (
+        await ch_svc.for_period(session, period, mgr=mgr, source=source)
+        if settings.data_source == "real" else None
+    )
+    if rebuilt is not None:
+        return rebuilt
+    rows = (await session.execute(select(Channel).order_by(Channel.position))).scalars().all()
+    return [
+        {"name": c.name, "color": c.color, "spend": c.spend, "leads": c.leads,
+         "deals": c.deals, "payments": c.payments, "revenue": c.revenue, "margin": c.margin}
+        for c in rows
+    ]
+
+
+async def romi_by_channel(
+    session: AsyncSession, period: str = per.DEFAULT_PERIOD,
+    mgr: str = "all", source: str = "all",
+) -> list[dict]:
+    chs = await _period_channels(session, period, mgr, source)
     out = []
     for c in chs:
-        r = f.romi_of(c.spend, c.margin)
+        r = f.romi_of(c["spend"], c["margin"])
         if r is not None:
-            out.append({"name": c.name, "short_name": f.short_channel(c.name), "romi": r})
+            out.append({"name": c["name"], "short_name": f.short_channel(c["name"]), "romi": r})
     return out
 
 
-async def attention(session: AsyncSession) -> dict:
+async def attention(session: AsyncSession, mgr: str = "all", source: str = "all") -> dict:
+    """Блок «Что требует внимания сейчас».
+
+    Период не применяется намеренно (блок показывает состояние на текущий момент),
+    но фильтры «менеджер»/«источник» сужают выборку — иначе они не действовали бы
+    на самую заметную часть дашборда."""
     from app.services import violations as vio
     from app.services.integrations_config import get_recompute_status
 
-    res = await vio.evaluate_current(session)
+    res = await vio.evaluate_current(session, mgr=mgr, source=source)
     regular = res["regular"]
     review = res["review"]
     cap = await vio.risk_amount_cap(session)
     money_at_risk = vio.money_at_risk(regular, cap)
+    risk_stmt = select(Deal).where(Deal.risk.is_not(None), Deal.on_dashboard.is_(True))
     risk_leads = (await session.execute(
-        select(Deal).where(Deal.risk.is_not(None), Deal.on_dashboard.is_(True))
+        _by_deal_filters(risk_stmt, mgr, source)
     )).scalars().all()
 
     # Реальные счётчики и суммы по типам нарушений (сумма — с дедупом и фильтром выбросов).
@@ -281,23 +392,27 @@ def _manager_zone(overdue: int, notask: int) -> tuple[str, str]:
     return "в норме", "t-green"
 
 
-async def _managers_from_deals(session: AsyncSession) -> list[dict]:
+async def _managers_from_deals(
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+) -> list[dict]:
     """Агрегаты по менеджерам из реальных сделок Битрикс24 (боевой режим).
 
     Имя менеджера уже сопоставлено при выгрузке (ASSIGNED_BY_ID → ФИО через
-    справочник сотрудников). Просрочки и «сделки без задачи» берём из движка
-    регламента (те же нарушения, что на «Мониторинге»)."""
-    deals = (await session.execute(
-        select(Deal).where(
-            Deal.on_dashboard.is_(True), Deal.mgr.is_not(None), Deal.mgr != "—"
-        )
-    )).scalars().all()
+    справочник сотрудников). Выборка ограничена периодом и фильтрами дашборда.
+    Просрочки и «сделки без задачи» берём из движка регламента (те же нарушения,
+    что на «Мониторинге»)."""
+    start = _period_start(period, datetime.now(UTC))
+    stmt = select(Deal).where(
+        Deal.on_dashboard.is_(True), Deal.mgr.is_not(None), Deal.mgr != "—",
+        Deal.created_at.is_not(None), Deal.created_at >= start,
+    )
+    deals = (await session.execute(_by_deal_filters(stmt, mgr, source))).scalars().all()
     if not deals:
         return []
 
     # Нарушения по менеджерам: просрочки (over) и «нет задачи» (ptype no_task).
     from app.services import violations as vio
-    evaluated = await vio.evaluate_current(session)
+    evaluated = await vio.evaluate_current(session, mgr=mgr, source=source)
     overdue: dict[str, int] = {}
     notask: dict[str, int] = {}
     for v in evaluated.get("regular", []):
@@ -336,9 +451,12 @@ async def _managers_from_deals(session: AsyncSession) -> list[dict]:
     return out
 
 
-async def managers(session: AsyncSession) -> list[dict]:
+async def managers(
+    session: AsyncSession, period: str = per.DEFAULT_PERIOD,
+    mgr: str = "all", source: str = "all",
+) -> list[dict]:
     if settings.data_source == "real":
-        return await _managers_from_deals(session)
+        return await _managers_from_deals(session, period, mgr, source)
     rows = (await session.execute(
         select(ManagerControl).order_by(ManagerControl.position)
     )).scalars().all()
@@ -363,10 +481,7 @@ async def leads(
     if settings.data_source == "real":
         start = _period_start(period, datetime.now(UTC))
         stmt = stmt.where(Deal.created_at.is_not(None), Deal.created_at >= start)
-    if mgr and mgr != "all":
-        stmt = stmt.where(Deal.mgr == mgr)
-    if source and source != "all":
-        stmt = stmt.where(Deal.src == source)
+    stmt = _by_deal_filters(stmt, mgr, source)
     if risk == "risk":
         stmt = stmt.where(Deal.risk.is_not(None))
     stmt = stmt.order_by(Deal.position)

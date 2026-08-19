@@ -11,11 +11,19 @@ from app.services import content, reglament
 from app.services.clock import reference_now
 
 
-async def evaluate_current(session: AsyncSession) -> dict:
-    """Возвращает {'regular': [...], 'review': [...]} по текущим данным и настройкам."""
-    deals = (await session.execute(
-        select(Deal).options(selectinload(Deal.tasks)).order_by(Deal.position)
-    )).scalars().all()
+async def evaluate_current(
+    session: AsyncSession, mgr: str = "all", source: str = "all"
+) -> dict:
+    """Возвращает {'regular': [...], 'review': [...]} по текущим данным и настройкам.
+
+    mgr/source — фильтры дашборда: сужают набор сделок до передачи в движок,
+    чтобы счётчики триажа отвечали на выбор менеджера и источника."""
+    stmt = select(Deal).options(selectinload(Deal.tasks)).order_by(Deal.position)
+    if mgr and mgr != "all":
+        stmt = stmt.where(Deal.mgr == mgr)
+    if source and source != "all":
+        stmt = stmt.where(Deal.src == source)
+    deals = (await session.execute(stmt)).scalars().all()
     config = await content.regulation(session)
     # Сопоставление пользовательских полей Битрикс — только для движка (не в админку).
     from app.services.integrations_config import get_field_map
