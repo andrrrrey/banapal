@@ -8,6 +8,7 @@ from app.seeds.leads import ALL_DEALS
 class MockBitrix24Adapter:
     def fetch_deals(
         self, created_after: str | None = None, extra_fields: dict | None = None,  # noqa: ARG002
+        modified_after: str | None = None,  # noqa: ARG002
     ) -> list[dict]:
         return [dict(row) for row in ALL_DEALS]
 

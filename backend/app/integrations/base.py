@@ -16,7 +16,8 @@ class Bitrix24Adapter(Protocol):
     """Битрикс24: сделки единой воронки, история этапов, задачи."""
 
     def fetch_deals(
-        self, created_after: str | None = None, extra_fields: dict[str, str] | None = None
+        self, created_after: str | None = None, extra_fields: dict[str, str] | None = None,
+        modified_after: str | None = None,
     ) -> list[dict]: ...
     def fetch_deal_fields(self) -> list[dict]: ...  # [{"code","title"}] поля сделки
     def fetch_stage_history(self) -> list[dict]: ...
