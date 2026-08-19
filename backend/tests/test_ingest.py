@@ -8,7 +8,8 @@ from app.services import ingest
 def test_channel_for_campaign() -> None:
     assert ingest.channel_for_campaign("Поиск · Брендовые")[0] == "Яндекс Директ — Поиск"
     assert ingest.channel_for_campaign("РСЯ · Ретаргетинг")[0] == "Яндекс Директ — РСЯ"
-    assert ingest.channel_for_campaign("Неизвестная")[0] == "Прочее"
+    # Кампании без ключевых слов попадают в канал по умолчанию.
+    assert ingest.channel_for_campaign("Неизвестная")[0] == "Яндекс Директ — прочее"
 
 
 def test_aggregate_channels_vat_net() -> None:
@@ -27,12 +28,14 @@ def test_aggregate_channels_vat_net() -> None:
 
 def test_baseline_from() -> None:
     channels = [{"revenue": 500000, "margin": 170000, "spend": 100000}]
+    # Оплата определяется семантикой стадии Битрикс (S — успех), а не названием.
     deals = [
-        {"stage": "Оплачено", "amount": 100000, "invoice": True, "paid": True},
+        {"stage": "Оплачено", "semantic": "S", "amount": 100000, "invoice": True, "paid": True},
         {"stage": "Новое обращение", "amount": 0, "invoice": False, "paid": False},
     ]
     base = ingest.baseline_from(channels, deals)
     assert base["leads"] == 2
     assert base["deals"] == 1
     assert base["payments"] == 1
-    assert base["revenue"] == 500000
+    # Выручка — из выигранных сделок Битрикс, а не из рекламной атрибуции.
+    assert base["revenue"] == 100000

@@ -10,17 +10,29 @@ from __future__ import annotations
 
 import io
 import time
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
 from app.core.config import settings
 from app.integrations.real._http import DEFAULT_TIMEOUT
+from app.services.period import WINDOW_DAYS
 
 REPORTS_URL = "https://api.direct.yandex.com/json/v5/reports"
 
 # Сколько ждать офлайн-генерацию отчёта (сек). Тяжёлые отчёты (поисковые запросы)
 # ставятся в очередь и готовятся дольше, чем отчёт по кампаниям.
 _REPORT_DEADLINE = 150
+
+
+def _window() -> tuple[str, str]:
+    """Диапазон отчёта (YYYY-MM-DD): окно, покрывающее максимальный период дашборда.
+
+    LAST_30_DAYS не годится — при переключении периода на «квартал» данных за
+    остальные 60 дней просто нет, а «сегодня»/«7 дней» нечем ограничить.
+    """
+    today = datetime.now(UTC).date()
+    return (today - timedelta(days=WINDOW_DAYS)).isoformat(), today.isoformat()
 
 
 def parse_tsv(text: str, fields: list[str]) -> list[dict]:
@@ -103,20 +115,27 @@ def _report(body: dict, fields: list[str]) -> list[dict]:
 
 class RealYandexDirectAdapter:
     def fetch_channels(self) -> list[dict]:
+        """Статистика кампаний по дням (строка = кампания × дата).
+
+        Разбивка по дате обязательна: без неё расход и клики — один итог за 30
+        дней, и переключатель периода на дашборде/в аналитике ничего не меняет.
+        """
         # CampaignId — для атрибуции сделок по utm_campaign (обычно = id кампании).
-        fields = ["CampaignId", "CampaignName", "Cost", "Clicks", "Impressions"]
+        fields = ["Date", "CampaignId", "CampaignName", "Cost", "Clicks", "Impressions"]
+        date_from, date_to = _window()
         body = {"params": {
-            "SelectionCriteria": {},
+            "SelectionCriteria": {"DateFrom": date_from, "DateTo": date_to},
             "FieldNames": fields,
             "ReportName": f"campaigns_{int(time.time())}",
             "ReportType": "CAMPAIGN_PERFORMANCE_REPORT",
-            "DateRangeType": "LAST_30_DAYS",
+            "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES",
             "IncludeDiscount": "NO",
         }}
         rows = _report(body, fields)
         return [{
+            "date": r.get("Date") or None,
             "campaign_id": r.get("CampaignId", ""),
             "campaign": r.get("CampaignName", ""),
             "spend_gross": int(float(r.get("Cost", 0) or 0)),
@@ -126,12 +145,13 @@ class RealYandexDirectAdapter:
 
     def fetch_search_queries(self) -> list[dict]:
         fields = ["Query", "CampaignName", "Impressions", "Cost", "Clicks", "Conversions"]
+        date_from, date_to = _window()
         body = {"params": {
-            "SelectionCriteria": {},
+            "SelectionCriteria": {"DateFrom": date_from, "DateTo": date_to},
             "FieldNames": fields,
             "ReportName": f"queries_{int(time.time())}",
             "ReportType": "SEARCH_QUERY_PERFORMANCE_REPORT",
-            "DateRangeType": "LAST_30_DAYS",
+            "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES",
             "IncludeDiscount": "NO",

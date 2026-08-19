@@ -65,6 +65,13 @@ async def review(session: AsyncSession) -> list[dict]:
 
 async def create_task_for(session: AsyncSession, ref: str) -> dict:
     """Ставит задачу ответственному по сделке (по согласованной логике)."""
+    # Доступы и режим источника данных сохраняются через UI в БД, а процессов
+    # API несколько (gunicorn workers): тот, который не обрабатывал сохранение,
+    # оставался с прежним settings.data_source и уходил в мок-адаптер — задача
+    # «создавалась» только на экране. Поэтому читаем актуальные настройки из БД.
+    from app.services.integrations_config import apply_overrides_from_db
+    await apply_overrides_from_db(session)
+
     deal = (await session.execute(
         select(Deal).options(selectinload(Deal.tasks)).where(Deal.ref == ref)
     )).scalar_one_or_none()
@@ -82,6 +89,10 @@ async def create_task_for(session: AsyncSession, ref: str) -> dict:
         "title": params["title"], "assignee": params["assignee"],
         "assignee_id": params["assignee_id"], "due_at": params["due_at"],
     })
+    # Мок-адаптер в портал ничего не пишет. Демо-режим — штатный сценарий, но
+    # выдавать его за созданную задачу нельзя: отдаём признак mock, и интерфейс
+    # сообщает, что задача записана только локально.
+    demo = bool(result.get("mock"))
     deal.tasks.append(Task(
         title=params["title"], assignee=params["assignee"],
         status="open", due_at=params["due_at"],
@@ -91,4 +102,6 @@ async def create_task_for(session: AsyncSession, ref: str) -> dict:
         "ok": True, "deal": deal.name, "ref": deal.ref,
         "assignee": params["assignee"], "title": params["title"], "due": params["due_label"],
         "external_id": result.get("external_id"),
+        "activity_id": result.get("activity_id"),
+        "mock": demo,
     }

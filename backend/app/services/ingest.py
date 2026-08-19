@@ -22,8 +22,19 @@ from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.logging import get_logger
 from app.integrations import factory
-from app.models import AdCost, Baseline, BudgetRec, Campaign, Channel, Deal, MinusWord, Product
+from app.models import (
+    AdCost,
+    Baseline,
+    BudgetRec,
+    Campaign,
+    Channel,
+    Deal,
+    MinusWord,
+    Product,
+    Visit,
+)
 from app.services import format as f
+from app.services import period as per
 from app.services import rec_style, romi
 
 logger = get_logger("banapal.ingest")
@@ -31,10 +42,10 @@ logger = get_logger("banapal.ingest")
 # Тип колбэка прогресса: получает короткий текст шага.
 Progress = Callable[[str], Awaitable[None]]
 
-# Глубина выгрузки сделок Битрикс24 (совпадает с окном дашборда).
-# Окно выгрузки сделок — покрывает максимальный период дашборда (квартал ≈ 90 дней),
-# чтобы фильтрация по датам работала для всех периодов, а не только для 30 дней.
-_DEALS_WINDOW_DAYS = 95
+# Глубина выгрузки сделок Битрикс24 — общее окно источников (per.WINDOW_DAYS):
+# покрывает максимальный период дашборда (квартал ≈ 90 дней), чтобы фильтрация по
+# датам работала для всех периодов, а не только для 30 дней.
+_DEALS_WINDOW_DAYS = per.WINDOW_DAYS
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -43,6 +54,16 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
     try:
         return datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_date(value: str | None) -> datetime | None:
+    """Дата отчёта источника (YYYY-MM-DD) → datetime в UTC."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value)).replace(tzinfo=UTC)
     except (ValueError, TypeError):
         return None
 
@@ -66,10 +87,12 @@ def _deal_from_bitrix(
     users: dict[str, str] | None = None,
     stages: dict[str, str] | None = None,
     phones: dict[str, str] | None = None,
+    sources: dict[str, str] | None = None,
 ) -> Deal:
     """Нормализованная сделка Битрикс24 → строка Deal (минимальный безопасный маппинг).
 
-    users: ID сотрудника → ФИО; stages: STAGE_ID → название; phones: contact_id → телефон.
+    users: ID сотрудника → ФИО; stages: STAGE_ID → название; phones: contact_id →
+    телефон; sources: SOURCE_ID → название источника.
     """
     code = nd.get("stage")
     semantic = nd.get("semantic")
@@ -78,6 +101,10 @@ def _deal_from_bitrix(
     mgr = (users or {}).get(mgr_id) or mgr_id or "—"
     contact_id = str(nd.get("contact_id") or "").strip()
     phone = (phones or {}).get(contact_id)
+    src_code = str(nd.get("src") or "").strip()
+    # Название источника вместо служебного кода портала («site» → «Сайт»);
+    # обрезаем под ширину колонки — справочник источников на портале произвольный.
+    src = ((sources or {}).get(src_code) or src_code or "—")[:64]
     custom = nd.get("custom") or {}
     return Deal(
         position=position,
@@ -85,7 +112,7 @@ def _deal_from_bitrix(
         ref=nd.get("ref", ""),
         external_id=nd.get("external_id"),
         name=nd.get("name") or "Без названия",
-        src=str(nd.get("src") or "—"),
+        src=src,
         campaign=nd.get("campaign"),
         utm=nd.get("utm"),
         mgr=mgr,
@@ -132,16 +159,30 @@ def _deal_cost(deal: dict) -> int:
         return 0
 
 
+def _row_spend_net(row: dict) -> int:
+    """Расход строки в базе без НДС.
+
+    Директ отдаёт расход с НДС (`spend_gross`) — приводим; сохранённые строки
+    AdCost уже нормализованы (`spend`), их берём как есть.
+    """
+    if row.get("spend") is not None:
+        return int(row["spend"] or 0)
+    return round(romi.vat_to_net(row.get("spend_gross", 0)))
+
+
 def aggregate_channels(
     direct_costs: list[dict],
     deals: list[dict] | None = None,
 ) -> list[dict]:
     """Строит витрину каналов/кампаний из расхода Директа + атрибуции сделок.
 
-    Расход приводится к базе без НДС. Сделки привязываются к кампаниям по utm_campaign
-    (сопоставление с id или названием кампании Директа); по привязанным сделкам
-    считаются лиды/сделки/оплаты/выручка/маржа. Маржа = выручка − себестоимость
-    (из сопоставленного поля; без него ≈ выручка).
+    Расход приводится к базе без НДС. Строки статистики приходят с разбивкой по
+    дням (кампания × дата), поэтому кампании сворачиваются по ключу (id/название):
+    иначе одна кампания попадала бы в таблицу отдельной строкой на каждый день.
+    Сделки привязываются к кампаниям по utm_campaign (сопоставление с id или
+    названием кампании Директа); по привязанным сделкам считаются
+    лиды/сделки/оплаты/выручка/маржа. Маржа = выручка − себестоимость (из
+    сопоставленного поля; без него ≈ выручка).
     """
     deals = deals or []
     channels: dict[str, dict] = {}
@@ -150,23 +191,27 @@ def aggregate_channels(
     for row in direct_costs:
         camp = row.get("campaign", "")
         cid = str(row.get("campaign_id") or "").strip()
-        spend_net = round(romi.vat_to_net(row.get("spend_gross", 0)))
+        spend_net = _row_spend_net(row)
         ch_name, color = channel_for_campaign(camp)
         ch = channels.setdefault(ch_name, {
             "name": ch_name, "color": color, "spend": 0,
             "leads": 0, "deals": 0, "payments": 0, "revenue": 0, "margin": 0,
             "campaigns": [],
         })
-        ch["spend"] += spend_net
-        crec = {
-            "name": camp, "spend": spend_net,
-            "leads": 0, "deals": 0, "payments": 0, "revenue": 0, "margin": 0,
-        }
-        ch["campaigns"].append(crec)
-        if cid:
-            camp_index[cid] = crec
-        if camp:
-            camp_index[camp.strip().lower()] = crec
+        # Ключ сворачивания дневных строк одной кампании (id надёжнее названия).
+        key = cid or camp.strip().lower()
+        crec = camp_index.get(key)
+        if crec is None:
+            crec = {
+                "name": camp, "spend": 0,
+                "leads": 0, "deals": 0, "payments": 0, "revenue": 0, "margin": 0,
+            }
+            ch["campaigns"].append(crec)
+            if cid:
+                camp_index[cid] = crec
+            if camp:
+                camp_index[camp.strip().lower()] = crec
+        crec["spend"] += spend_net
 
     # Атрибуция сделок к кампаниям по utm_campaign (id или название).
     for d in deals:
@@ -187,7 +232,7 @@ def aggregate_channels(
 
     # Свернуть кампании в каналы.
     for ch in channels.values():
-        for k in ("leads", "deals", "payments", "revenue", "margin"):
+        for k in ("spend", "leads", "deals", "payments", "revenue", "margin"):
             ch[k] = sum(c[k] for c in ch["campaigns"])
     return list(channels.values())
 
@@ -321,6 +366,7 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     users: dict[str, str] = {}
     stages: dict[str, str] = {}
     phones: dict[str, str] = {}
+    sources_map: dict[str, str] = {}
     if settings.bitrix24_webhook_url:
         since = (datetime.now(UTC) - timedelta(days=_DEALS_WINDOW_DAYS)).strftime(
             "%Y-%m-%dT00:00:00+03:00"
@@ -343,6 +389,12 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
                 stages = {s["id"]: s["name"] for s in factory.get_bitrix24().fetch_stages()}
             except Exception as exc:  # noqa: BLE001 — названия стадий необязательны
                 logger.warning("Битрикс24: справочник стадий недоступен: %s", exc)
+            try:
+                sources_map = {
+                    s["id"]: s["name"] for s in factory.get_bitrix24().fetch_sources()
+                }
+            except Exception as exc:  # noqa: BLE001 — названия источников необязательны
+                logger.warning("Битрикс24: справочник источников недоступен: %s", exc)
             # Телефоны берём у контактов сделок (в самой сделке телефона нет).
             try:
                 contact_ids = [str(d.get("contact_id")) for d in deals if d.get("contact_id")]
@@ -413,6 +465,7 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     await session.execute(delete(Campaign))
     await session.execute(delete(Channel))
     await session.execute(delete(AdCost))
+    await session.execute(delete(Visit))
     await session.execute(delete(Product))
     await session.execute(delete(Baseline))
     # Демо-таблицы без реального источника (менеджеры/рекомендации/минус-слова/
@@ -421,7 +474,25 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     await data_mode.clear_no_source_tables(session)
 
     for i, nd in enumerate(deals):
-        session.add(_deal_from_bitrix(i, nd, users, stages, phones))
+        session.add(_deal_from_bitrix(i, nd, users, stages, phones, sources_map))
+
+    # Сырьё источников по дням — из него считаются расход/клики/визиты за период
+    # (иначе показатели остаются одним 30-дневным итогом на все периоды).
+    for row in direct_costs:
+        session.add(AdCost(
+            date=_parse_date(row.get("date")),
+            campaign=str(row.get("campaign") or "")[:128],
+            campaign_id=str(row.get("campaign_id") or "")[:32] or None,
+            spend=_row_spend_net(row),
+            clicks=int(row.get("clicks") or 0),
+            impressions=int(row.get("impressions") or 0),
+        ))
+    for row in metrika_visits:
+        session.add(Visit(
+            date=_parse_date(row.get("date")),
+            source=str(row.get("source") or "")[:128],
+            visits=int(row.get("visits") or 0),
+        ))
 
     for i, ch in enumerate(channels):
         channel = Channel(

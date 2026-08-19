@@ -76,20 +76,31 @@ class Payment(Base):
 
 
 class AdCost(Base):
-    """Расходы/клики/показы Яндекс Директа по кампании и дню (Reports API)."""
+    """Расходы/клики/показы Яндекс Директа по кампании и дню (Reports API).
+
+    Строка = кампания × дата; расход хранится в базе без НДС. Посуточная разбивка
+    нужна для пересчёта показателей под выбранный период.
+    """
 
     __tablename__ = "ad_costs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     campaign: Mapped[str] = mapped_column(String(128), default="")
+    # ID кампании Директа — по нему сделки привязываются к кампании (utm_campaign).
+    campaign_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     spend: Mapped[int] = mapped_column(BigInteger, default=0)
     clicks: Mapped[int] = mapped_column(Integer, default=0)
     impressions: Mapped[int] = mapped_column(BigInteger, default=0)
 
 
 class Visit(Base):
-    """Визит/сессия из Яндекс Метрики (источник, UTM, цель)."""
+    """Визиты Яндекс Метрики, сгруппированные по дню и источнику.
+
+    Метрика отдаёт агрегат (дата × источник → число сессий), поэтому строка —
+    не один визит, а их количество за день: visits. Разбивка по дате нужна,
+    чтобы переключатель периода менял показатель «Визиты».
+    """
 
     __tablename__ = "visits"
 
@@ -97,6 +108,7 @@ class Visit(Base):
     date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     source: Mapped[str] = mapped_column(String(128), default="")
     utm: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    visits: Mapped[int] = mapped_column(Integer, default=0)
     goal_reached: Mapped[bool] = mapped_column(Boolean, default=False)
 
 

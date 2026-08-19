@@ -11,6 +11,7 @@ import httpx
 
 from app.core.config import settings
 from app.integrations.real._http import DEFAULT_TIMEOUT, request
+from app.services.period import WINDOW_DAYS
 
 STAT_URL = "https://api-metrika.yandex.net/stat/v1/data"
 
@@ -35,7 +36,9 @@ class RealYandexMetrikaAdapter:
             "ids": settings.yandex_metrika_counter_id,
             "metrics": "ym:s:visits",
             "dimensions": "ym:s:date,ym:s:lastsignTrafficSource",
-            "date1": "30daysAgo",
+            # Окно шире максимального периода дашборда (квартал) — иначе при
+            # переключении периода визиты остаются 30-дневным итогом.
+            "date1": f"{WINDOW_DAYS}daysAgo",
             "date2": "today",
             "limit": 10000,
         }

@@ -1,0 +1,66 @@
+"""Витрина каналов/кампаний за выбранный период.
+
+Сохранённые строки Channel/Campaign — итог последнего пересчёта за всё окно
+выгрузки источников, поэтому напрямую они не отвечают на переключатель периода.
+Здесь витрина пересобирается на лету из посуточного сырья Директа (AdCost) и
+сделок, попавших в тот же период. Если посуточного сырья нет (пересчёт ещё не
+выполнялся после обновления или Директ не подключён), возвращается None —
+вызывающий код показывает сохранённые строки.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import AdCost, Deal
+from app.services import ingest
+from app.services import period as per
+
+
+async def has_daily_costs(session: AsyncSession) -> bool:
+    """Есть ли посуточное сырьё Директа (иначе период применить не к чему)."""
+    return bool(await session.scalar(select(func.count()).select_from(AdCost)))
+
+
+def deal_row(deal: Deal) -> dict:
+    """Сделка из БД → запись в форме, которую ждёт агрегатор конвейера."""
+    return {
+        "campaign": deal.campaign,
+        "amount": int(deal.amount or 0),
+        # Семантика успеха в БД хранится классом статуса (см. ingest._stage_class).
+        "semantic": "S" if deal.status_class == "st-ok" else None,
+        "custom": deal.custom or {},
+    }
+
+
+async def for_period(
+    session: AsyncSession, period: str, *, mgr: str = "all", source: str = "all"
+) -> list[dict] | None:
+    """Каналы/кампании за период или None, если посуточного сырья ещё нет."""
+    if not await has_daily_costs(session):
+        return None
+
+    start = per.start(period, datetime.now(UTC))
+    costs = (await session.execute(
+        select(AdCost).where(AdCost.date.is_not(None), AdCost.date >= start)
+    )).scalars().all()
+    cost_rows = [
+        {
+            "campaign": c.campaign, "campaign_id": c.campaign_id,
+            # Расход в AdCost уже приведён к базе без НДС.
+            "spend": c.spend, "clicks": c.clicks, "impressions": c.impressions,
+        }
+        for c in costs
+    ]
+
+    stmt = select(Deal).where(Deal.created_at.is_not(None), Deal.created_at >= start)
+    if mgr and mgr != "all":
+        stmt = stmt.where(Deal.mgr == mgr)
+    if source and source != "all":
+        stmt = stmt.where(Deal.src == source)
+    deals = (await session.execute(stmt)).scalars().all()
+
+    return ingest.aggregate_channels(cost_rows, [deal_row(d) for d in deals])
