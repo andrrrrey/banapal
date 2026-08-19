@@ -73,41 +73,94 @@ def test_bitrix_fetch_stages_and_sources_split_by_entity(monkeypatch) -> None:
     assert sources == {"site": "Сайт", "NEW": "Звонок"}
 
 
-def test_bitrix_create_task_adds_deal_activity(monkeypatch) -> None:
-    """Задача ставится и дублируется «делом» в карточке сделки."""
-    calls: list[tuple[str, dict]] = []
-
+def _rest_stub(calls: list[tuple[str, dict]], *, deal_responsible: str = "12"):
+    """Заглушка REST: сделка с ответственным, создание задачи и дела, справочник имён."""
     def fake_rest(method: str, payload: dict):
         calls.append((method, payload))
+        if method == "crm.deal.get":
+            return {"ID": payload["id"], "ASSIGNED_BY_ID": deal_responsible}
         if method == "tasks.task.add":
             return {"task": {"id": 555}}
+        if method == "user.get":
+            return [{"ID": payload["ID"], "NAME": "Михаил", "LAST_NAME": "Иванов"}]
         return {"id": 777}
 
-    monkeypatch.setattr(bitrix24, "_rest", fake_rest)
+    return fake_rest
+
+
+def test_bitrix_create_task_assigns_deal_responsible(monkeypatch) -> None:
+    """Исполнитель задачи — ответственный по сделке; задача дублируется «делом»."""
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(bitrix24, "_rest", _rest_stub(calls))
+
     out = bitrix24.RealBitrix24Adapter().create_task({
         "deal_ref": "Сделка #3390", "deal_external_id": "3390",
         "title": "Свяжитесь по сделке", "assignee_id": "12", "due_at": None,
     })
 
-    assert out == {"ok": True, "external_id": 555, "activity_id": "777", "mock": False}
-    methods = [m for m, _ in calls]
-    assert methods == ["tasks.task.add", "crm.activity.todo.add"]
-    # Задача привязана к сделке, дело заведено в её таймлайне.
-    assert calls[0][1]["fields"]["UF_CRM_TASK"] == ["D_3390"]
-    assert calls[1][1]["ownerTypeId"] == 2
-    assert calls[1][1]["ownerId"] == "3390"
-    assert calls[1][1]["responsibleId"] == "12"
+    assert out == {
+        "ok": True, "external_id": 555, "activity_id": "777",
+        "assignee_id": "12", "assignee": "Михаил Иванов", "mock": False,
+    }
+    assert [m for m, _ in calls] == [
+        "crm.deal.get", "tasks.task.add", "crm.activity.todo.add", "user.get",
+    ]
+    task_fields = calls[1][1]["fields"]
+    assert task_fields["RESPONSIBLE_ID"] == "12"
+    # Задача привязана к сделке, дело заведено в её таймлайне на того же человека.
+    assert task_fields["UF_CRM_TASK"] == ["D_3390"]
+    assert calls[2][1]["ownerTypeId"] == 2
+    assert calls[2][1]["ownerId"] == "3390"
+    assert calls[2][1]["responsibleId"] == "12"
 
 
-def test_bitrix_create_task_requires_deal_and_assignee(monkeypatch) -> None:
-    """Без ответственного или ID сделки задачу ставить нельзя — это молчаливый провал."""
-    monkeypatch.setattr(bitrix24, "_rest", lambda *a, **kw: pytest.fail("не должно вызываться"))
+def test_bitrix_create_task_prefers_current_responsible(monkeypatch) -> None:
+    """Сделку переназначили после выгрузки — задача уходит новому ответственному."""
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(bitrix24, "_rest", _rest_stub(calls, deal_responsible="99"))
+
+    out = bitrix24.RealBitrix24Adapter().create_task({
+        "deal_external_id": "3390", "title": "t", "assignee_id": "12", "due_at": None,
+    })
+
+    assert out["assignee_id"] == "99"  # не устаревшая «12» из последней выгрузки
+    assert calls[1][1]["fields"]["RESPONSIBLE_ID"] == "99"
+
+
+def test_bitrix_create_task_rejects_unassigned_deal(monkeypatch) -> None:
+    """ASSIGNED_BY_ID=0 — это «не назначен»: задачу «Не распределено» не создаём."""
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(bitrix24, "_rest", _rest_stub(calls, deal_responsible="0"))
     adapter = bitrix24.RealBitrix24Adapter()
 
-    with pytest.raises(RuntimeError, match="ответственного"):
-        adapter.create_task({"deal_external_id": "3390", "title": "t"})
+    with pytest.raises(RuntimeError, match="не назначен ответственный"):
+        adapter.create_task({"deal_external_id": "3390", "title": "t", "assignee_id": "0"})
+    # Ни задача, ни дело не создавались.
+    assert [m for m, _ in calls] == ["crm.deal.get"]
+
+
+def test_bitrix_create_task_falls_back_to_stored_responsible(monkeypatch) -> None:
+    """Портал не отдал сделку — берём сохранённого ответственного, а не падаем."""
+    calls: list[tuple[str, dict]] = []
+    stub = _rest_stub(calls)
+
+    def flaky(method: str, payload: dict):
+        if method == "crm.deal.get":
+            raise RuntimeError("портал недоступен")
+        return stub(method, payload)
+
+    monkeypatch.setattr(bitrix24, "_rest", flaky)
+    out = bitrix24.RealBitrix24Adapter().create_task({
+        "deal_external_id": "3390", "title": "t", "assignee_id": "12", "due_at": None,
+    })
+    assert out["assignee_id"] == "12"
+
+
+def test_bitrix_create_task_requires_deal_id(monkeypatch) -> None:
+    """Без ID сделки задачу ставить некуда — это молчаливый провал."""
+    monkeypatch.setattr(bitrix24, "_rest", lambda *a, **kw: pytest.fail("не должно вызываться"))
     with pytest.raises(RuntimeError, match="идентификатор"):
-        adapter.create_task({"assignee_id": "12", "title": "t"})
+        bitrix24.RealBitrix24Adapter().create_task({"assignee_id": "12", "title": "t"})
 
 
 def test_bitrix_rest_raises_on_error_envelope(monkeypatch) -> None:
