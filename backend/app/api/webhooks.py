@@ -5,9 +5,13 @@
 приходить в заголовке X-Webhook-Token, query-параметре token либо в поле формы
 application_token (формат исходящих вебхуков Битрикс24).
 
-В боевом режиме приход события (изменение сделки) запускает фоновый пересчёт
-данных дашборда — с защитой от штормов: не чаще, чем раз в MIN_INTERVAL, и не
-параллельно уже идущему пересчёту.
+В боевом режиме приход события (изменение сделки) запускает быструю сверку
+сделок с порталом — с защитой от штормов: не чаще, чем раз в MIN_INTERVAL, и не
+параллельно идущему полному пересчёту.
+
+Сверка намеренно лёгкая: событие по сделке не требует перевыгрузки рекламных
+источников (Директ/Метрика/МойСклад) — их отчёты готовятся минутами и упираются
+в лимиты API. Полный пересчёт идёт по расписанию отдельно.
 """
 
 from __future__ import annotations
@@ -28,9 +32,14 @@ from app.services import maintenance
 logger = get_logger("banapal.webhooks")
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
-# Минимальный интервал между авто-пересчётами по вебхуку (дебаунс всплесков).
-_MIN_INTERVAL = timedelta(seconds=60)
+# Минимальный интервал между сверками по вебхуку (дебаунс всплесков). Сверка
+# короткая, поэтому интервал небольшой — правки в CRM доезжают почти сразу.
+_MIN_INTERVAL = timedelta(seconds=15)
 _STALE = timedelta(minutes=15)
+
+# Момент последней сверки в этом процессе (дебаунс без записи в БД: статус в БД
+# принадлежит полному пересчёту, и лёгкая сверка не должна его перетирать).
+_last_sync: datetime | None = None
 
 
 async def _extract_token(request: Request) -> str | None:
@@ -56,27 +65,24 @@ def _parse(ts: str | None) -> datetime | None:
         return None
 
 
-async def _maybe_trigger_recompute(session: AsyncSession) -> bool:
-    """Запускает фоновый пересчёт, если можно (боевой режим, не чаще интервала)."""
+async def _maybe_trigger_sync(session: AsyncSession) -> bool:
+    """Запускает фоновую сверку сделок, если можно (боевой режим, не чаще интервала)."""
+    global _last_sync
+
     if await cfg.load_data_source(session) != "real":
         return False
-    st = await cfg.get_recompute_status(session)
     now = datetime.now(UTC)
+    # Полный пересчёт уже идёт (и не завис) — он и так перечитает сделки.
+    st = await cfg.get_recompute_status(session)
     started = _parse(st.get("started_at"))
-    # Уже идёт (и не завис) — не дублируем.
     if st.get("state") == "running" and started and now - started < _STALE:
         return False
-    # Дебаунс: не запускать чаще интервала (по последнему запуску/завершению).
-    last = _parse(st.get("finished_at")) or started
-    if last and now - last < _MIN_INTERVAL:
+    # Дебаунс всплесков: при массовом изменении сделок хватит одной сверки.
+    if _last_sync and now - _last_sync < _MIN_INTERVAL:
         return False
-    await cfg.set_recompute_status(session, {
-        "state": "running", "step": "Запуск по событию Битрикс24…",
-        "started_at": now.isoformat(timespec="seconds"),
-        "finished_at": None, "mode": None, "error": None, "sources": {}, "stats": {},
-    })
-    threading.Thread(target=maintenance.run_recompute_blocking, daemon=True).start()
-    logger.info("Авто-пересчёт запущен по вебхуку Битрикс24")
+    _last_sync = now
+    threading.Thread(target=maintenance.run_deals_sync_blocking, daemon=True).start()
+    logger.info("Сверка сделок запущена по вебхуку Битрикс24")
     return True
 
 
@@ -98,9 +104,13 @@ async def bitrix24_webhook(
 
     triggered = False
     try:
-        triggered = await _maybe_trigger_recompute(session)
+        triggered = await _maybe_trigger_sync(session)
     except Exception as exc:  # noqa: BLE001 — ответ вебхуку не должен падать
-        logger.warning("Авто-пересчёт по вебхуку не запущен: %s", exc)
+        logger.warning("Сверка по вебхуку не запущена: %s", exc)
 
-    logger.info("Вебхук Битрикс24 принят (пересчёт запущен: %s)", triggered)
-    return {"ok": True, "received": True, "recompute_triggered": triggered}
+    logger.info("Вебхук Битрикс24 принят (сверка запущена: %s)", triggered)
+    # recompute_triggered оставлен для совместимости с прежним контрактом ответа.
+    return {
+        "ok": True, "received": True,
+        "sync_triggered": triggered, "recompute_triggered": triggered,
+    }

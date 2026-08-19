@@ -15,7 +15,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -330,6 +330,143 @@ def baseline_from(channels: list[dict], deals: list[dict]) -> dict[str, float]:
     }
 
 
+# ------------------- Лёгкая синхронизация сделок (боевой режим) -------------------
+
+# Поля сделки, которые приходят из Битрикс24 и обновляются при синхронизации.
+# Остальное (локальные задачи, история этапов) принадлежит нам и не затирается.
+# position сюда не входит: порядок задаётся отдельно (см. refresh_deals).
+_DEAL_SYNC_FIELDS = (
+    "on_dashboard", "ref", "name", "src", "campaign", "utm", "mgr", "mgr_id",
+    "phone", "client_type", "refuse_reason", "custom", "status_label", "status_class",
+    "stage", "amount", "created_at", "last_activity_at",
+)
+
+# Запас перекрытия окна изменений: покрывает пропущенные тики планировщика и
+# расхождение часов с порталом, чтобы правка сделки не потерялась между запусками.
+_SYNC_OVERLAP_MINUTES = 30
+
+
+def _apply_deal_fields(target: Deal, fresh: Deal) -> None:
+    """Переносит поля из свежей выгрузки в существующую строку сделки."""
+    for name in _DEAL_SYNC_FIELDS:
+        setattr(target, name, getattr(fresh, name))
+
+
+async def _bitrix_dictionaries(
+    deals: list[dict], progress: Progress | None = None
+) -> tuple[dict, dict, dict, dict]:
+    """Справочники сотрудников/стадий/источников и телефоны контактов (best-effort)."""
+    b24 = factory.get_bitrix24()
+    if progress:
+        await progress("Битрикс24: справочники сотрудников, стадий и источников…")
+    users: dict[str, str] = {}
+    stages: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    phones: dict[str, str] = {}
+    try:
+        users = {u["id"]: u["name"] for u in b24.fetch_users()}
+    except Exception as exc:  # noqa: BLE001 — имена необязательны
+        logger.warning("Битрикс24: справочник сотрудников недоступен: %s", exc)
+    try:
+        stages = {x["id"]: x["name"] for x in b24.fetch_stages()}
+    except Exception as exc:  # noqa: BLE001 — названия стадий необязательны
+        logger.warning("Битрикс24: справочник стадий недоступен: %s", exc)
+    try:
+        sources = {x["id"]: x["name"] for x in b24.fetch_sources()}
+    except Exception as exc:  # noqa: BLE001 — названия источников необязательны
+        logger.warning("Битрикс24: справочник источников недоступен: %s", exc)
+    try:
+        contact_ids = [str(d.get("contact_id")) for d in deals if d.get("contact_id")]
+        if contact_ids:
+            if progress:
+                await progress("Битрикс24: телефоны контактов…")
+            phones = b24.fetch_contact_phones(contact_ids)
+    except Exception as exc:  # noqa: BLE001 — телефоны необязательны
+        logger.warning("Битрикс24: телефоны контактов недоступны: %s", exc)
+    return users, stages, sources, phones
+
+
+async def refresh_deals(session: AsyncSession, *, full: bool = False) -> dict:
+    """Синхронизирует сделки из Битрикс24 без выгрузки рекламных источников.
+
+    Это быстрый путь для событий портала и частой сверки: рекламные витрины
+    (Директ/Метрика/МойСклад) не трогаются, тянутся только сделки. По умолчанию
+    берутся сделки, изменённые за последнее окно; full=True перечитывает всё окно
+    дашборда и убирает сделки, исчезнувшие из портала.
+
+    Строки сделок обновляются на месте (по ID Битрикс24), а не пересоздаются:
+    иначе при каждой сверке терялись бы локально поставленные задачи и «сделки
+    без задач» возвращались бы в мониторинг сразу после постановки задачи.
+    """
+    if settings.data_source != "real":
+        return {"skipped": True, "reason": "демо-режим", "updated": 0, "created": 0}
+    if not settings.bitrix24_webhook_url:
+        return {"skipped": True, "reason": "Битрикс24 не настроен", "updated": 0, "created": 0}
+
+    from app.services.integrations_config import get_field_map
+    extra_fields = (await get_field_map(session)).get("fields") or {}
+
+    now = datetime.now(UTC)
+    if full:
+        window = (now - timedelta(days=_DEALS_WINDOW_DAYS)).strftime("%Y-%m-%dT00:00:00+03:00")
+        raw = factory.get_bitrix24().fetch_deals(
+            created_after=window, extra_fields=extra_fields)
+    else:
+        since = (now - timedelta(minutes=_SYNC_OVERLAP_MINUTES)).isoformat(timespec="seconds")
+        raw = factory.get_bitrix24().fetch_deals(
+            modified_after=since, extra_fields=extra_fields)
+
+    users, stages, sources_map, phones = await _bitrix_dictionaries(raw)
+
+    existing = {
+        d.external_id: d
+        for d in (await session.execute(select(Deal))).scalars().all()
+        if d.external_id
+    }
+    created = updated = 0
+    seen: set[str] = set()
+    # Порядок сделок. При полном чтении окна он задаётся выдачей портала (по дате
+    # создания). При частичной сверке позиции существующих строк не трогаем, а
+    # новые дописываем в конец: иначе номера столкнулись бы с уже сохранёнными,
+    # и порядок таблицы лидов (а с ним и выбор «оригинала» среди дублей) поплыл бы.
+    next_position = max((d.position for d in existing.values()), default=-1) + 1
+    for i, nd in enumerate(raw):
+        fresh = _deal_from_bitrix(i, nd, users, stages, phones, sources_map)
+        ext = fresh.external_id
+        current = existing.get(ext) if ext else None
+        if current is None:
+            if not full:
+                fresh.position = next_position
+                next_position += 1
+            session.add(fresh)
+            created += 1
+        else:
+            _apply_deal_fields(current, fresh)
+            if full:
+                current.position = i
+            updated += 1
+        if ext:
+            seen.add(ext)
+
+    removed = 0
+    if full:
+        # Только при полном чтении окна известно, каких сделок в портале больше нет.
+        for ext, row in existing.items():
+            if ext not in seen:
+                await session.delete(row)
+                removed += 1
+
+    await session.commit()
+    logger.info(
+        "Сверка сделок Битрикс24: создано=%d обновлено=%d удалено=%d (full=%s)",
+        created, updated, removed, full,
+    )
+    return {
+        "skipped": False, "created": created, "updated": updated,
+        "removed": removed, "full": full,
+    }
+
+
 # --------------------------- Оркестрация (боевой режим) ---------------------------
 
 async def _fetch_source(
@@ -381,33 +518,9 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
                 created_after=since, extra_fields=extra_fields),
             progress, f"Битрикс24: загрузка сделок за {_DEALS_WINDOW_DAYS} дней…",
         )
-        # Справочники сотрудников и стадий (имена/этапы) — не критично для пересчёта.
+        # Справочники и телефоны контактов — не критично для пересчёта.
         if sources["bitrix24"]["status"] == "ok":
-            if progress:
-                await progress("Битрикс24: справочники сотрудников и стадий…")
-            try:
-                users = {u["id"]: u["name"] for u in factory.get_bitrix24().fetch_users()}
-            except Exception as exc:  # noqa: BLE001 — имена необязательны
-                logger.warning("Битрикс24: справочник сотрудников недоступен: %s", exc)
-            try:
-                stages = {s["id"]: s["name"] for s in factory.get_bitrix24().fetch_stages()}
-            except Exception as exc:  # noqa: BLE001 — названия стадий необязательны
-                logger.warning("Битрикс24: справочник стадий недоступен: %s", exc)
-            try:
-                sources_map = {
-                    s["id"]: s["name"] for s in factory.get_bitrix24().fetch_sources()
-                }
-            except Exception as exc:  # noqa: BLE001 — названия источников необязательны
-                logger.warning("Битрикс24: справочник источников недоступен: %s", exc)
-            # Телефоны берём у контактов сделок (в самой сделке телефона нет).
-            try:
-                contact_ids = [str(d.get("contact_id")) for d in deals if d.get("contact_id")]
-                if contact_ids:
-                    if progress:
-                        await progress("Битрикс24: телефоны контактов…")
-                    phones = factory.get_bitrix24().fetch_contact_phones(contact_ids)
-            except Exception as exc:  # noqa: BLE001 — телефоны необязательны
-                logger.warning("Битрикс24: телефоны контактов недоступны: %s", exc)
+            users, stages, sources_map, phones = await _bitrix_dictionaries(deals, progress)
     else:
         deals = []
         sources["bitrix24"] = {"status": "skipped"}

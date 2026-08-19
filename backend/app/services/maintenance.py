@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -73,6 +74,38 @@ async def _generate_ai(session: AsyncSession) -> dict[str, Any]:
 async def generate_ai() -> dict[str, Any]:
     """Генерация AI-инсайтов и рекомендаций по бюджету через LLM (если подключён LLM)."""
     return await _with_session(_generate_ai)
+
+
+# ------------------ Сверка сделок (фоново, лёгкий путь) -------------------------
+
+# Одна сверка за раз в процессе: события портала и тик планировщика не должны
+# накладываться друг на друга и писать в одни и те же строки сделок.
+_deals_lock = threading.Lock()
+
+
+def run_deals_sync_blocking() -> None:
+    """Точка входа фонового потока: быстрая сверка сделок с Битрикс24.
+
+    Рекламные источники не трогаются — это отдельный (долгий) пересчёт.
+    """
+    if not _deals_lock.acquire(blocking=False):
+        logger.info("Сверка сделок уже идёт — пропуск")
+        return
+    try:
+        result = asyncio.run(sync_deals())
+        if result.get("skipped"):
+            logger.info("Сверка сделок пропущена: %s", result.get("reason"))
+    except Exception:  # noqa: BLE001 — фоновый поток не должен ронять процесс
+        logger.exception("Сверка сделок упала")
+    finally:
+        _deals_lock.release()
+
+
+async def sync_deals(full: bool = False) -> dict[str, Any]:
+    """Синхронизирует сделки из Битрикс24 (без выгрузки рекламных источников)."""
+    from app.services import ingest as ingest_mod
+
+    return await _with_session(lambda s: ingest_mod.refresh_deals(s, full=full))
 
 
 # --------------------------- Пересчёт (фоново, со статусом) ---------------------

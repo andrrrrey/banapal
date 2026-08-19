@@ -120,8 +120,15 @@ def normalize_deal(raw: dict, extra_fields: dict[str, str] | None = None) -> dic
 
 class RealBitrix24Adapter:
     def fetch_deals(
-        self, created_after: str | None = None, extra_fields: dict[str, str] | None = None
+        self, created_after: str | None = None, extra_fields: dict[str, str] | None = None,
+        modified_after: str | None = None,
     ) -> list[dict]:
+        """Сделки портала.
+
+        created_after — окно по дате создания (полная выгрузка).
+        modified_after — только изменённые с указанного момента: короткая выборка
+        для частой синхронизации, чтобы не тянуть всё окно каждые несколько минут.
+        """
         select = [
             "ID", "TITLE", "STAGE_ID", "STAGE_SEMANTIC_ID", "ASSIGNED_BY_ID",
             "CONTACT_ID", "SOURCE_ID", "OPPORTUNITY", "DATE_CREATE", "DATE_MODIFY",
@@ -131,8 +138,11 @@ class RealBitrix24Adapter:
         select += [c for c in {v for v in (extra_fields or {}).values() if v} if c not in select]
         params: dict[str, Any] = {"select": select}
         # Ограничение периода резко сокращает объём выгрузки (иначе постранично
-        # тянется вся история портала). created_after — дата в формате ISO 8601.
-        if created_after:
+        # тянется вся история портала). Даты — в формате ISO 8601.
+        if modified_after:
+            params["filter"] = {">=DATE_MODIFY": modified_after}
+            params["order"] = {"DATE_MODIFY": "DESC"}
+        elif created_after:
             params["filter"] = {">=DATE_CREATE": created_after}
             params["order"] = {"DATE_CREATE": "DESC"}
         raw = _call("crm.deal.list", params)

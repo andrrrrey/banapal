@@ -1,8 +1,13 @@
 """Планировщик (worker) на APScheduler.
 
-На Этапе A задач ещё нет — процесс поднимает планировщик и ждёт.
-Регулярные джобы (выгрузка источников, ночной пересчёт аналитики, вызовы AI)
-регистрируются на Этапах B–D.
+Регулярные джобы боевого режима:
+  · сверка сделок с Битрикс24 — часто, лёгкая (страховка на случай, если событие
+    портала не дошло или было проглочено дебаунсом);
+  · выгрузка источников и пересчёт витрин — редко, тяжёлая (отчёты Директа и
+    Метрики готовятся долго и упираются в лимиты API);
+  · генерация AI-инсайтов — в ночном окне.
+
+В демо-режиме джобы выгрузки — no-op: демо-данные статичны.
 """
 
 from __future__ import annotations
@@ -18,19 +23,44 @@ from app.core.logging import get_logger
 logger = get_logger("banapal.worker")
 
 
+def _sync_deals(full: bool) -> None:
+    """Сверка сделок с Битрикс24 без выгрузки рекламных источников."""
+    import asyncio
+
+    from app.services import maintenance
+
+    try:
+        # Режим и доступы читаются из БД внутри sync_deals — переключение
+        # источника данных в UI подхватывается без перезапуска воркера.
+        result = asyncio.run(maintenance.sync_deals(full=full))
+    except Exception as exc:  # noqa: BLE001 — джоба не должна ронять планировщик
+        logger.error("Сверка сделок: ошибка %s", exc)
+        return
+    if result.get("skipped"):
+        logger.info("Сверка сделок пропущена: %s", result.get("reason"))
+    else:
+        logger.info(
+            "Сверка сделок: создано=%s обновлено=%s удалено=%s",
+            result.get("created"), result.get("updated"), result.get("removed"),
+        )
+
+
 def reconcile_regulation() -> None:
-    """Периодическая сверка регламента (в боевом режиме — выгрузка из Битрикс24
-    и пересчёт нарушений; в mock — лёгкий тик)."""
-    logger.info("Сверка регламента (reconcile) выполнена")
+    """Частая сверка сделок: подтягивает правки CRM, если событие портала не дошло.
+
+    Нарушения регламента считаются на лету при каждом запросе, поэтому отдельно
+    пересчитывать их не нужно — достаточно держать сделки свежими.
+    """
+    _sync_deals(full=False)
 
 
 def ingest_sources() -> None:
-    """Регулярная выгрузка источников (Директ/Метрика/Calltouch/МойСклад).
+    """Полная сверка сделок за окно дашборда.
 
-    С учётом суточного сдвига Calltouch и лимитов API. В mock — no-op;
-    боевая выгрузка подключается на Этапе E.
+    В отличие от частой сверки читает всё окно и убирает сделки, удалённые в
+    портале, — их исчезновение события не порождает.
     """
-    logger.info("Выгрузка источников (ingest) — mock, пропущено")
+    _sync_deals(full=True)
 
 
 def recompute_analytics() -> None:
@@ -61,12 +91,12 @@ def refresh_ai_insights() -> None:
 
 def build_scheduler() -> BackgroundScheduler:
     scheduler = BackgroundScheduler(timezone="Europe/Moscow")
-    # Сверка соблюдения регламента — в реальном времени (частый интервал).
+    # Сверка сделок — часто и дёшево: тянутся только изменённые сделки.
     scheduler.add_job(
         reconcile_regulation, "interval", minutes=5, id="reconcile_regulation",
         max_instances=1, coalesce=True,
     )
-    # Выгрузка источников — по расписанию, не чаще необходимого.
+    # Полная сверка окна — реже: ловит удалённые в портале сделки.
     scheduler.add_job(
         ingest_sources, "interval", hours=1, id="ingest_sources",
         max_instances=1, coalesce=True,
