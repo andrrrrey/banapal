@@ -13,7 +13,10 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.integrations.real._http import DEFAULT_TIMEOUT, request
+
+logger = get_logger("banapal.integrations")
 
 _PAGE = 50
 
@@ -64,6 +67,17 @@ def _rest(method: str, payload: dict) -> Any:
         msg = data.get("error_description") or data.get("error")
         raise RuntimeError(f"Битрикс24 отклонил {method}: {msg}")
     return data.get("result") if isinstance(data, dict) else None
+
+
+def _user_id(value: Any) -> str:
+    """ID сотрудника Битрикс24 или «» — если ответственный не назначен.
+
+    У сделки без ответственного ASSIGNED_BY_ID приходит нулём, а «0» — непустая
+    строка: она проходила проверку на заполненность и уезжала в RESPONSIBLE_ID,
+    из-за чего задача создавалась со статусом «Не распределено».
+    """
+    text = str(value or "").strip()
+    return "" if text in ("", "0") else text
 
 
 def _coerce(value: Any) -> str:
@@ -181,6 +195,38 @@ class RealBitrix24Adapter:
                 out.append({"id": str(sid), "name": s.get("NAME") or str(sid)})
         return out
 
+    def fetch_deal_responsible(self, deal_id: str) -> str:
+        """Текущий ответственный по сделке (ASSIGNED_BY_ID) прямо из портала.
+
+        Сохранённое у нас значение может устареть — сделку могли переназначить
+        после последнего пересчёта, а исполнителем задачи должен стать тот, кто
+        отвечает за сделку сейчас.
+        """
+        result = _rest("crm.deal.get", {"id": deal_id})
+        if isinstance(result, dict):
+            return _user_id(result.get("ASSIGNED_BY_ID"))
+        return ""
+
+    def fetch_user_name(self, user_id: str) -> str:
+        """ФИО сотрудника по ID (для подтверждения в интерфейсе); «» — если не найден."""
+        result = _rest("user.get", {"ID": user_id})
+        rows = result if isinstance(result, list) else []
+        for u in rows:
+            parts = [u.get("NAME"), u.get("LAST_NAME")]
+            name = " ".join(str(x).strip() for x in parts if x).strip()
+            if name:
+                return name
+        return ""
+
+    def _resolve_responsible(self, deal_id: str, stored: Any) -> str:
+        """ID исполнителя задачи — ответственный по сделке (портал важнее кэша)."""
+        try:
+            live = self.fetch_deal_responsible(deal_id)
+        except Exception as exc:  # noqa: BLE001 — падать из-за справочника не нужно
+            logger.warning("Битрикс24: не удалось прочитать ответственного по сделке: %s", exc)
+            live = ""
+        return live or _user_id(stored)
+
     def fetch_contact_phones(self, contact_ids: list[str]) -> dict[str, str]:
         """Телефоны контактов: {contact_id: phone}. Телефон хранится у контакта,
         не в сделке, поэтому подтягивается отдельно (иначе поле «Телефон» пустое)."""
@@ -220,19 +266,19 @@ class RealBitrix24Adapter:
         «Дела», где задача сама по себе не появляется, — поэтому дополнительно
         создаём CRM-дело (crm.activity.todo.add) с тем же сроком и текстом.
         """
-        # RESPONSIBLE_ID обязателен для tasks.task.add — без него Битрикс отклоняет
-        # запрос. Берём ID ответственного по сделке (ASSIGNED_BY_ID).
-        responsible = payload.get("assignee_id")
-        if not responsible:
-            raise RuntimeError(
-                "Не удалось определить ответственного в Битрикс24 (ASSIGNED_BY_ID). "
-                "Проверьте, что у сделки задан ответственный, и выполните пересчёт."
-            )
         deal_id = payload.get("deal_external_id")
         if not deal_id:
             raise RuntimeError(
                 "У сделки не сохранён идентификатор Битрикс24 — задачу некуда "
                 "привязать. Выполните пересчёт на странице «Интеграции»."
+            )
+        # Исполнитель задачи — ответственный по сделке. RESPONSIBLE_ID обязателен
+        # для tasks.task.add: без него (или с нулём) задача выходит «Не распределено».
+        responsible = self._resolve_responsible(deal_id, payload.get("assignee_id"))
+        if not responsible:
+            raise RuntimeError(
+                "У сделки в Битрикс24 не назначен ответственный — некому поставить "
+                "задачу. Назначьте ответственного по сделке и повторите."
             )
 
         title = payload.get("title", "Задача по сделке")
@@ -262,8 +308,16 @@ class RealBitrix24Adapter:
             deal_id=deal_id, responsible=responsible, title=title,
             description=description, deadline=deadline,
         )
+        # Имя исполнителя — чтобы интерфейс подтверждал того, кому задача ушла
+        # в портале, а не того, кто числился ответственным на момент выгрузки.
+        try:
+            assignee = self.fetch_user_name(responsible)
+        except Exception as exc:  # noqa: BLE001 — задача уже создана, имя не критично
+            logger.warning("Битрикс24: имя исполнителя недоступно: %s", exc)
+            assignee = ""
         return {
-            "ok": True, "external_id": task_id, "activity_id": activity_id, "mock": False,
+            "ok": True, "external_id": task_id, "activity_id": activity_id,
+            "assignee_id": responsible, "assignee": assignee, "mock": False,
         }
 
     def _add_deal_activity(

@@ -93,14 +93,17 @@ async def create_task_for(session: AsyncSession, ref: str) -> dict:
     # выдавать его за созданную задачу нельзя: отдаём признак mock, и интерфейс
     # сообщает, что задача записана только локально.
     demo = bool(result.get("mock"))
+    # Исполнителя назначает портал (ответственный по сделке на текущий момент),
+    # поэтому подтверждаем именно его, а не имя из последней выгрузки.
+    assignee = result.get("assignee") or params["assignee"]
     deal.tasks.append(Task(
-        title=params["title"], assignee=params["assignee"],
+        title=params["title"], assignee=assignee,
         status="open", due_at=params["due_at"],
     ))
     await session.commit()
     return {
         "ok": True, "deal": deal.name, "ref": deal.ref,
-        "assignee": params["assignee"], "title": params["title"], "due": params["due_label"],
+        "assignee": assignee, "title": params["title"], "due": params["due_label"],
         "external_id": result.get("external_id"),
         "activity_id": result.get("activity_id"),
         "mock": demo,

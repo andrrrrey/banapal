@@ -97,7 +97,11 @@ def _deal_from_bitrix(
     code = nd.get("stage")
     semantic = nd.get("semantic")
     stage = (stages or {}).get(str(code)) or code  # человекочитаемое название стадии
+    # У сделки без ответственного ASSIGNED_BY_ID приходит нулём — это «не назначен»,
+    # а не идентификатор: иначе задача в Битриксе уходила в «Не распределено».
     mgr_id = str(nd.get("mgr") or "").strip()
+    if mgr_id == "0":
+        mgr_id = ""
     mgr = (users or {}).get(mgr_id) or mgr_id or "—"
     contact_id = str(nd.get("contact_id") or "").strip()
     phone = (phones or {}).get(contact_id)
