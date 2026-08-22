@@ -43,9 +43,14 @@ async def for_period(
     if not await has_daily_costs(session):
         return None
 
-    start = per.start(period, datetime.now(UTC))
+    now = datetime.now(UTC)
+    start = per.start(period, now)
+    end = per.end(period, now)
+    cost_where = [AdCost.date.is_not(None), AdCost.date >= start]
+    if end is not None:
+        cost_where.append(AdCost.date < end)
     costs = (await session.execute(
-        select(AdCost).where(AdCost.date.is_not(None), AdCost.date >= start)
+        select(AdCost).where(*cost_where)
     )).scalars().all()
     cost_rows = [
         {
@@ -57,6 +62,8 @@ async def for_period(
     ]
 
     stmt = select(Deal).where(Deal.created_at.is_not(None), Deal.created_at >= start)
+    if end is not None:
+        stmt = stmt.where(Deal.created_at < end)
     if mgr and mgr != "all":
         stmt = stmt.where(Deal.mgr == mgr)
     if source and source != "all":
