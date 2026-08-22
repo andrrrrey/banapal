@@ -36,6 +36,7 @@ from app.models import (
 from app.services import format as f
 from app.services import period as per
 from app.services import rec_style, romi
+from app.services import sources as src_svc
 
 logger = get_logger("banapal.ingest")
 
@@ -108,7 +109,10 @@ def _deal_from_bitrix(
     src_code = str(nd.get("src") or "").strip()
     # Название источника вместо служебного кода портала («site» → «Сайт»);
     # обрезаем под ширину колонки — справочник источников на портале произвольный.
-    src = ((sources or {}).get(src_code) or src_code or "—")[:64]
+    resolved = ((sources or {}).get(src_code) or src_code or "—")[:64]
+    # Сырые коды («call», «mail», «cpc»), которые портал не разрешил в название,
+    # сворачиваем в понятные названия и объединяем с основными источниками.
+    src = src_svc.canonical_source(resolved)
     custom = nd.get("custom") or {}
     return Deal(
         position=position,
@@ -457,9 +461,13 @@ async def refresh_deals(session: AsyncSession, *, full: bool = False) -> dict:
                 removed += 1
 
     await session.commit()
+    # Доводим уже сохранённые строки к каноничным источникам: частичная сверка
+    # трогает только изменённые сделки, поэтому старые коды («call», «cpc») чиним
+    # отдельным идемпотентным проходом по всей таблице.
+    normalized = await src_svc.normalize_existing(session)
     logger.info(
-        "Сверка сделок Битрикс24: создано=%d обновлено=%d удалено=%d (full=%s)",
-        created, updated, removed, full,
+        "Сверка сделок Битрикс24: создано=%d обновлено=%d удалено=%d источники=%d (full=%s)",
+        created, updated, removed, normalized, full,
     )
     return {
         "skipped": False, "created": created, "updated": updated,
