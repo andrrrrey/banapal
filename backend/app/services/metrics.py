@@ -217,13 +217,22 @@ async def kpis(
 async def filter_options(session: AsyncSession) -> dict:
     """Реальные значения для фильтров (менеджеры/каналы/источники) из данных БД.
 
-    Ограничиваемся сделками дашборда (``on_dashboard``): иначе в списках оказывались
-    менеджеры и источники (например SOURCE_ID «cpc»), у которых нет ни одной сделки
-    на дашборде, — выбор такого значения обнулял все витрины. Так список фильтра
-    соответствует тому, что реально считают карточки и таблицы."""
+    Список строится по тем же сделкам, которые реально считают карточки и таблицы:
+    только сделки дашборда (``on_dashboard``), а в боевом режиме — ещё и с
+    распознанной датой создания (``created_at``). Иначе в фильтре появлялись
+    менеджеры и источники (например SOURCE_ID «cpc»), у которых нет ни одной
+    учитываемой сделки: выбор такого значения обнулял все витрины при любом периоде,
+    и это выглядело как «фильтр не работает». Теперь любой источник из списка при
+    каком-то периоде показывает данные, а «пустые» значения справочника не
+    предлагаются вовсе."""
+    # Базовый предикат «сделка учитывается витринами» — совпадает с period_deals.
+    countable = [Deal.on_dashboard.is_(True)]
+    if settings.data_source == "real":
+        countable.append(Deal.created_at.is_not(None))
+
     mgrs = (await session.execute(
         select(Deal.mgr)
-        .where(Deal.on_dashboard.is_(True), Deal.mgr.is_not(None), Deal.mgr != "—")
+        .where(*countable, Deal.mgr.is_not(None), Deal.mgr != "—")
         .distinct()
     )).scalars().all()
     chans = (await session.execute(
@@ -231,7 +240,7 @@ async def filter_options(session: AsyncSession) -> dict:
     )).scalars().all()
     srcs = (await session.execute(
         select(Deal.src)
-        .where(Deal.on_dashboard.is_(True), Deal.src.is_not(None), Deal.src != "—")
+        .where(*countable, Deal.src.is_not(None), Deal.src != "—")
         .distinct()
     )).scalars().all()
     return {

@@ -269,6 +269,40 @@ def test_custom_period_ad_totals_windowed() -> None:
     with_real_data(check)
 
 
+def test_filter_options_hide_uncountable_sources() -> None:
+    """Источник без учитываемых сделок не попадает в фильтр (случай «cpc = везде 0»).
+
+    Витрины считают только сделки дашборда с распознанной датой создания. Источник,
+    у которого все сделки либо не на дашборде, либо без created_at, не должен
+    предлагаться в списке — иначе его выбор обнуляет дашборд при любом периоде.
+    """
+    async def check(s: AsyncSession) -> None:
+        # cpc: на дашборде, но без даты создания (DATE_CREATE не распознан) —
+        # не учитывается ни одной витриной при любом периоде.
+        s.add(Deal(
+            position=90, on_dashboard=True, ref="cpc-1", external_id="90",
+            name="cpc без даты", src="cpc", mgr="Иванов",
+            status_label="В работе", status_class="st-mid", stage="В работе",
+            amount=0, created_at=None,
+        ))
+        # partner: сделка есть, но не на дашборде.
+        s.add(Deal(
+            position=91, on_dashboard=False, ref="partner-1", external_id="91",
+            name="partner off", src="partner", mgr="Иванов",
+            status_label="В работе", status_class="st-mid", stage="В работе",
+            amount=0, created_at=NOW,
+        ))
+        await s.commit()
+
+        opts = await metrics.filter_options(s)
+        assert "cpc" not in opts["sources"]
+        assert "partner" not in opts["sources"]
+        # Обычные источники сидов остаются доступны.
+        assert {"Сайт", "Звонок"} <= set(opts["sources"])
+
+    with_real_data(check)
+
+
 @pytest.mark.parametrize("period", ["today", "7", "30", "quarter"])
 def test_leads_table_follows_period(period: str) -> None:
     """Таблица лидов не выходит за границы выбранного периода."""
