@@ -18,6 +18,11 @@ def _period_start(period: str | None, now: datetime) -> datetime:
     return per.start(period, now)
 
 
+def _period_end(period: str | None, now: datetime) -> datetime | None:
+    """Верхняя граница периода (исключающая); None у открытых пресетов."""
+    return per.end(period, now)
+
+
 def _by_deal_filters(stmt, mgr: str = "all", source: str = "all"):
     """Фильтры дашборда «менеджер» и «источник» на выборку сделок."""
     if mgr and mgr != "all":
@@ -37,16 +42,22 @@ async def _ad_totals(session: AsyncSession, period: str) -> dict[str, float]:
     Пока посуточного сырья нет (пересчёт не выполнялся после обновления), берём
     сохранённые итоги последнего пересчёта — иначе показатели обнулились бы.
     """
-    start = _period_start(period, datetime.now(UTC))
+    now = datetime.now(UTC)
+    start = _period_start(period, now)
+    end = _period_end(period, now)
+    cost_where = [AdCost.date.is_not(None), AdCost.date >= start]
+    visit_where = [Visit.date.is_not(None), Visit.date >= start]
+    if end is not None:
+        cost_where.append(AdCost.date < end)
+        visit_where.append(Visit.date < end)
     spend, clicks = (await session.execute(
         select(
             func.coalesce(func.sum(AdCost.spend), 0),
             func.coalesce(func.sum(AdCost.clicks), 0),
-        ).where(AdCost.date.is_not(None), AdCost.date >= start)
+        ).where(*cost_where)
     )).one()
     visits = (await session.execute(
-        select(func.coalesce(func.sum(Visit.visits), 0))
-        .where(Visit.date.is_not(None), Visit.date >= start)
+        select(func.coalesce(func.sum(Visit.visits), 0)).where(*visit_where)
     )).scalar() or 0
 
     has_costs = bool(await session.scalar(select(func.count()).select_from(AdCost)))
@@ -82,12 +93,16 @@ async def period_deals(
     session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
 ) -> list[Deal]:
     """Сделки дашборда за период с учётом фильтров «менеджер» и «источник»."""
-    start = _period_start(period, datetime.now(UTC))
+    now = datetime.now(UTC)
+    start = _period_start(period, now)
+    end = _period_end(period, now)
     stmt = select(Deal).where(
         Deal.on_dashboard.is_(True),
         Deal.created_at.is_not(None),
         Deal.created_at >= start,
     )
+    if end is not None:
+        stmt = stmt.where(Deal.created_at < end)
     return list((await session.execute(
         _by_deal_filters(stmt, mgr, source)
     )).scalars().all())
@@ -200,15 +215,24 @@ async def kpis(
 
 
 async def filter_options(session: AsyncSession) -> dict:
-    """Реальные значения для фильтров (менеджеры/каналы/источники) из данных БД."""
+    """Реальные значения для фильтров (менеджеры/каналы/источники) из данных БД.
+
+    Ограничиваемся сделками дашборда (``on_dashboard``): иначе в списках оказывались
+    менеджеры и источники (например SOURCE_ID «cpc»), у которых нет ни одной сделки
+    на дашборде, — выбор такого значения обнулял все витрины. Так список фильтра
+    соответствует тому, что реально считают карточки и таблицы."""
     mgrs = (await session.execute(
-        select(Deal.mgr).where(Deal.mgr.is_not(None), Deal.mgr != "—").distinct()
+        select(Deal.mgr)
+        .where(Deal.on_dashboard.is_(True), Deal.mgr.is_not(None), Deal.mgr != "—")
+        .distinct()
     )).scalars().all()
     chans = (await session.execute(
         select(Channel.name).order_by(Channel.position)
     )).scalars().all()
     srcs = (await session.execute(
-        select(Deal.src).where(Deal.src.is_not(None), Deal.src != "—").distinct()
+        select(Deal.src)
+        .where(Deal.on_dashboard.is_(True), Deal.src.is_not(None), Deal.src != "—")
+        .distinct()
     )).scalars().all()
     return {
         "managers": sorted({m for m in mgrs if m}),
@@ -401,11 +425,15 @@ async def _managers_from_deals(
     справочник сотрудников). Выборка ограничена периодом и фильтрами дашборда.
     Просрочки и «сделки без задачи» берём из движка регламента (те же нарушения,
     что на «Мониторинге»)."""
-    start = _period_start(period, datetime.now(UTC))
+    now = datetime.now(UTC)
+    start = _period_start(period, now)
+    end = _period_end(period, now)
     stmt = select(Deal).where(
         Deal.on_dashboard.is_(True), Deal.mgr.is_not(None), Deal.mgr != "—",
         Deal.created_at.is_not(None), Deal.created_at >= start,
     )
+    if end is not None:
+        stmt = stmt.where(Deal.created_at < end)
     deals = (await session.execute(_by_deal_filters(stmt, mgr, source))).scalars().all()
     if not deals:
         return []
@@ -479,8 +507,12 @@ async def leads(
     # В боевом режиме список лидов следует выбранному периоду (по дате создания),
     # чтобы переключатель периода менял и таблицу «Обработка лидов».
     if settings.data_source == "real":
-        start = _period_start(period, datetime.now(UTC))
+        now = datetime.now(UTC)
+        start = _period_start(period, now)
+        end = _period_end(period, now)
         stmt = stmt.where(Deal.created_at.is_not(None), Deal.created_at >= start)
+        if end is not None:
+            stmt = stmt.where(Deal.created_at < end)
     stmt = _by_deal_filters(stmt, mgr, source)
     if risk == "risk":
         stmt = stmt.where(Deal.risk.is_not(None))

@@ -222,6 +222,53 @@ def test_chain_follows_period() -> None:
     with_real_data(check)
 
 
+def test_custom_period_exact_date_and_interval() -> None:
+    """Кастомный период: точная дата и интервал ограничивают выборку сверху и снизу.
+
+    Сиды: сделки с days_ago = 0, 3, 20, 60. Проверяем, что `date:`/`range:`
+    отбирают ровно те сделки, чьи created_at попадают в границы (включительно).
+    """
+    async def check(s: AsyncSession) -> None:
+        def day(days_ago: int) -> str:
+            return (NOW - timedelta(days=days_ago)).date().isoformat()
+
+        # Точная дата: только сделка, созданная 3 дня назад (amount 200_000).
+        exact = await metrics._period_baseline(s, f"date:{day(3)}")
+        assert exact["leads"] == 1
+        assert exact["revenue"] == 200_000
+
+        # Интервал 3..20 дней назад включительно: сделки #2 и #3.
+        interval = await metrics._period_baseline(s, f"range:{day(20)}:{day(3)}")
+        assert interval["leads"] == 2
+        assert interval["revenue"] == 500_000  # 200_000 + 300_000
+
+        # Таблица лидов следует тем же границам.
+        assert len(await metrics.leads(s, period=f"date:{day(0)}")) == 1
+        assert len(await metrics.leads(s, period=f"range:{day(60)}:{day(0)}")) == 4
+
+        # Диаграмма источников уважает верхнюю границу: сделка #4 (60 дней, «Сайт»)
+        # выпадает из окна 0..20, остаётся только «Сайт»×2 и «Звонок»×1.
+        donut = {r["name"]: r["leads"] for r in await metrics.sources(s, f"range:{day(20)}:{day(0)}")}
+        assert donut == {"Сайт": 2, "Звонок": 1}
+
+    with_real_data(check)
+
+
+def test_custom_period_ad_totals_windowed() -> None:
+    """Расход/клики/визиты кастомного интервала ограничены и сверху, и снизу."""
+    async def check(s: AsyncSession) -> None:
+        def day(days_ago: int) -> str:
+            return (NOW - timedelta(days=days_ago)).date().isoformat()
+
+        # Интервал 3..20 дней назад: расход по дням 3 и 20 (2000 + 3000).
+        totals = await metrics._ad_totals(s, f"range:{day(20)}:{day(3)}")
+        assert totals["spend"] == 5_000
+        assert totals["clicks"] == 50   # 20 + 30
+        assert totals["visits"] == 500  # 200 + 300
+
+    with_real_data(check)
+
+
 @pytest.mark.parametrize("period", ["today", "7", "30", "quarter"])
 def test_leads_table_follows_period(period: str) -> None:
     """Таблица лидов не выходит за границы выбранного периода."""

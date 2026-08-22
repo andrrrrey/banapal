@@ -90,6 +90,7 @@ body {
 }
 .seg button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(16,24,40,.09); font-weight: 600; }
 .filterbar .spacer { flex: 1; }
+.period-pop { display: flex; flex-direction: column; gap: 10px; min-width: 260px; }
 
 /* ---------- Контент ---------- */
 .content { overflow-y: auto; padding: 22px 28px 60px; flex: 1; }
