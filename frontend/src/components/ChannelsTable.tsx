@@ -12,9 +12,12 @@ function ActionCell({ action }: { action: Action }) {
 }
 
 function CampaignRow({ k }: { k: Campaign }) {
+  // Кампания — обычная строка той же таблицы (не вложенная), чтобы колонки
+  // совпадали с шапкой канала. Первая ячейка (каретка) — пустая.
   return (
-    <tr>
-      <td style={{ width: "auto" }}><span style={{ color: "var(--muted)" }}>↳ {k.name}</span></td>
+    <tr className="camp-row">
+      <td />
+      <td><span className="camp-name">↳ {k.name}</span></td>
       <td className="num">{k.spend ? k.spend_display : "—"}</td>
       <td className="num">{k.leads}</td>
       <td className="num">{k.deals}</td>
@@ -71,19 +74,9 @@ export function ChannelsTable({ rows }: { rows: ChannelRow[] }) {
                   <td><RomiCell romi={c.romi} /></td>
                   <td><ActionCell action={c.action} /></td>
                 </tr>
-                {hasKids && open.has(i) ? (
-                  <tr className="expand-row">
-                    <td colSpan={10}>
-                      <div className="exp-inner">
-                        <table>
-                          <tbody>
-                            {c.campaigns.map((k, j) => <CampaignRow key={j} k={k} />)}
-                          </tbody>
-                        </table>
-                      </div>
-                    </td>
-                  </tr>
-                ) : null}
+                {hasKids && open.has(i)
+                  ? c.campaigns.map((k, j) => <CampaignRow key={`c-${j}`} k={k} />)
+                  : null}
               </Fragment>
             );
           })}

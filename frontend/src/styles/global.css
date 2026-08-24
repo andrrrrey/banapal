@@ -298,9 +298,9 @@ tbody tr.click:hover { background: #FAFAFE; }
 .ai-cell { color: #6D4BB8; font-size: 12.5px; display: flex; align-items: center; gap: 6px; white-space: normal; max-width: 280px; }
 .ai-cell svg { width: 14px; height: 14px; flex: none; color: var(--violet); }
 .cnt-bad { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--red-soft); color: #C6362B; font-weight: 700; font-size: 12px; }
-.exp-inner { padding: 4px 14px 6px 44px; }
-.exp-inner table { font-size: 12.5px; }
-.exp-inner thead th { background: transparent; }
+/* Кампании канала — строки той же таблицы (колонки совпадают с шапкой). */
+.camp-row td { background: #FBFBFD; font-size: 12.5px; }
+.camp-name { color: var(--muted); padding-left: 16px; }
 .caret { display: inline-block; transition: transform .2s; color: var(--faint); width: 14px; }
 tr.open .caret { transform: rotate(90deg); }
 .risk-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }

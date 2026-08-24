@@ -49,9 +49,16 @@ def romi_tag(spend: int | None, margin: int) -> dict:
     return {"display": f"{'+' if r > 0 else ''}{r}%", "cls": cls, "value": r}
 
 
-def action_of(name: str, spend: int | None, margin: int) -> dict:
-    """Рекомендуемое действие: {label, cls, note} (перенос actionOf/ACTIONS)."""
-    if name in ACTIONS:
+def action_of(name: str, spend: int | None, margin: int, *, static: bool = True) -> dict:
+    """Рекомендуемое действие: {label, cls, note} (перенос actionOf/ACTIONS).
+
+    static=True — демо-режим: для сидовых каналов берётся заранее написанная
+    рекомендация из ACTIONS. В боевом режиме (static=False) её брать нельзя:
+    имена каналов те же, но цифры реальные, и статичная подпись
+    («Масштабировать» при ROMI −100%) противоречит фактам — действие тогда
+    всегда выводится из реального ROMI.
+    """
+    if static and name in ACTIONS:
         label, cls, note = ACTIONS[name]
     elif spend is None:
         label, cls, note = "Данных недостаточно", "act-nodata", "Источник расхода не подключён"

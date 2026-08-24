@@ -68,11 +68,15 @@ def _spend_display(spend: int | None) -> str:
 
 
 def _row(name: str, spend: int | None, leads: int, deals: int, payments: int,
-         revenue: int, margin: int, *, campaign: bool = False) -> dict:
+         revenue: int, margin: int, *, campaign: bool = False,
+         static: bool = True) -> dict:
     """Строка сводки (канал или кампания) с готовыми к выводу значениями.
 
     У кампаний нулевой/неизвестный расход показывается прочерком (как в прототипе),
     у каналов — развёрнуто («0 ₽» для бесплатного канала, «нет данных» без источника).
+
+    static=False — цифры реальные (пересобраны за период): рекомендуемое действие
+    считается из фактического ROMI, а не берётся из сидовых подписей ACTIONS.
     """
     return {
         "name": name, "spend": spend,
@@ -82,19 +86,23 @@ def _row(name: str, spend: int | None, leads: int, deals: int, payments: int,
         "revenue": revenue, "revenue_display": f.money(revenue),
         "margin": margin, "margin_display": f.money(margin),
         "romi": f.romi_tag(spend, margin),
-        "action": f.action_of(name, spend, margin),
+        "action": f.action_of(name, spend, margin, static=static),
     }
 
 
 async def _stored_table(session: AsyncSession) -> list[dict]:
     """Сводка из сохранённых витрин (демо-режим и данные до посуточной выгрузки)."""
+    # Сидовые подписи ACTIONS верны только для демо-цифр; в боевом режиме
+    # (сохранённые итоги реальных источников) действие считаем из ROMI.
+    static = settings.data_source != "real"
     out = []
     for c in await _channels(session):
-        row = _row(c.name, c.spend, c.leads, c.deals, c.payments, c.revenue, c.margin)
+        row = _row(c.name, c.spend, c.leads, c.deals, c.payments, c.revenue, c.margin,
+                   static=static)
         row["color"] = c.color
         row["campaigns"] = [
             _row(k.name, k.spend, k.leads, k.deals, k.payments, k.revenue, k.margin,
-                 campaign=True)
+                 campaign=True, static=static)
             for k in c.campaigns
         ]
         out.append(row)
@@ -120,11 +128,11 @@ async def channels_table(
         rows = []
         for c in rebuilt:
             row = _row(c["name"], c["spend"], c["leads"], c["deals"], c["payments"],
-                       c["revenue"], c["margin"])
+                       c["revenue"], c["margin"], static=False)
             row["color"] = c["color"]
             row["campaigns"] = [
                 _row(k["name"], k["spend"], k["leads"], k["deals"], k["payments"],
-                     k["revenue"], k["margin"], campaign=True)
+                     k["revenue"], k["margin"], campaign=True, static=False)
                 for k in c["campaigns"]
             ]
             rows.append(row)
