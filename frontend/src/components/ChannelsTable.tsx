@@ -17,7 +17,7 @@ function CampaignRow({ k }: { k: Campaign }) {
   return (
     <tr className="camp-row">
       <td />
-      <td><span className="camp-name">↳ {k.name}</span></td>
+      <td className="cell-cmp"><span className="camp-name">↳ {k.name}</span></td>
       <td className="num">{k.spend ? k.spend_display : "—"}</td>
       <td className="num">{k.leads}</td>
       <td className="num">{k.deals}</td>
@@ -45,7 +45,7 @@ export function ChannelsTable({ rows }: { rows: ChannelRow[] }) {
         <thead>
           <tr>
             <th />
-            <th>Канал / кампания</th><th>Расход</th><th>Лиды</th><th>Сделки</th><th>Оплаты</th>
+            <th className="cell-cmp">Канал / кампания</th><th>Расход</th><th>Лиды</th><th>Сделки</th><th>Оплаты</th>
             <th>Выручка</th><th>Маржа</th><th>ROMI</th><th>Действие</th>
           </tr>
         </thead>
@@ -59,7 +59,7 @@ export function ChannelsTable({ rows }: { rows: ChannelRow[] }) {
                   onClick={hasKids ? () => toggle(i) : undefined}
                 >
                   <td>{hasKids ? <span className="caret">▸</span> : null}</td>
-                  <td>
+                  <td className="cell-cmp">
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 9 }}>
                       <i style={{ width: 10, height: 10, borderRadius: 3, background: c.color }} />
                       <b>{c.name}</b>
