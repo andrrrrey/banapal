@@ -16,23 +16,46 @@ const PTYPE_LABEL: Record<string, string> = {
   refusal: "Подозрительный спам/отказ",
 };
 
+// Подписи фильтра по серьёзности (плашки статистики) — совпадают с подписями плашек.
+const SEV_LABEL: Record<string, string> = {
+  over: "Критичные просрочки",
+  money: "Деньги под риском",
+  warn: "Требуют внимания",
+  review: "На проверке",
+};
+
 export default function MonitorPage() {
   const [params, setParams] = useSearchParams();
   const filter = params.get("ptype");
-  const isReviewFilter = filter === "spam" || filter === "refusal";
+  const sev = params.get("sev");
+  const isReviewFilter = filter === "spam" || filter === "refusal" || sev === "review";
 
   const stats = useMonitorStats();
+  // Список regular тянем целиком (по ptype), а фильтр по серьёзности применяем на
+  // клиенте — severity уже есть в каждой строке, отдельный запрос не нужен.
   const violations = useViolations(filter);
   const review = useReview();
   const createTask = useCreateTask();
   const { message } = App.useApp();
   const [done, setDone] = useState<Set<string>>(new Set());
 
+  // Фильтрация списка нарушений по серьёзности (клик по плашке статистики).
+  const rows = (() => {
+    const data = violations.data ?? [];
+    if (sev === "over") return data.filter((v) => v.severity === "over");
+    if (sev === "warn") return data.filter((v) => v.severity === "warn");
+    if (sev === "money")
+      return data
+        .filter((v) => v.severity === "over" && v.amount > 0)
+        .sort((a, b) => b.amount - a.amount);
+    return data;
+  })();
+
   const PAGE_SIZE = 20;
   const [page, setPage] = useState(0);
-  const total = violations.data?.length ?? 0;
+  const total = rows.length;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const pageRows = violations.data?.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE) ?? [];
+  const pageRows = rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
   // Пагинация списка «Требует решения руководителя» (оценочные — их много).
   const [reviewPage, setReviewPage] = useState(0);
@@ -42,10 +65,17 @@ export default function MonitorPage() {
     reviewPage * PAGE_SIZE, reviewPage * PAGE_SIZE + PAGE_SIZE) ?? [];
 
   // Сброс страниц при смене фильтра или объёма данных.
-  useEffect(() => { setPage(0); }, [filter, total]);
+  useEffect(() => { setPage(0); }, [filter, sev, total]);
   useEffect(() => { setReviewPage(0); }, [filter, reviewTotal]);
 
   const clearFilter = () => setParams({});
+
+  // Клик по плашке статистики: ставим ?sev=key (фильтры ptype и sev взаимоисключающие);
+  // повторный клик по активной плашке снимает фильтр.
+  const onStatClick = (key?: string) => {
+    if (!key) return;
+    setParams(sev === key ? {} : { sev: key });
+  };
 
   const onTask = (ref: string) => {
     createTask.mutate(ref, {
@@ -66,14 +96,14 @@ export default function MonitorPage() {
     });
   };
 
-  const showReviewCard = !filter || isReviewFilter;
+  const showReviewCard = (!filter && !sev) || isReviewFilter;
 
   return (
     <>
-      {filter ? (
+      {filter || sev ? (
         <div style={{ marginBottom: 14 }}>
           <span className="filterpill">
-            Фильтр: <b>{PTYPE_LABEL[filter] ?? filter}</b>
+            Фильтр: <b>{filter ? (PTYPE_LABEL[filter] ?? filter) : (SEV_LABEL[sev!] ?? sev)}</b>
             <button onClick={clearFilter}>×</button>
           </span>
         </div>
@@ -81,7 +111,23 @@ export default function MonitorPage() {
 
       <div className="grid mon-stats">
         {stats.data?.stats.map((s, i) => (
-          <div key={i} className={`mstat ${s.cls}`}>
+          <div
+            key={i}
+            className={`mstat ${s.cls}${s.key ? " clickable" : ""}${sev === s.key && s.key ? " active" : ""}`}
+            onClick={s.key ? () => onStatClick(s.key) : undefined}
+            role={s.key ? "button" : undefined}
+            tabIndex={s.key ? 0 : undefined}
+            onKeyDown={
+              s.key
+                ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onStatClick(s.key);
+                    }
+                  }
+                : undefined
+            }
+          >
             <div className="mn num">{s.n}</div>
             <div className="ml">{s.label}</div>
           </div>

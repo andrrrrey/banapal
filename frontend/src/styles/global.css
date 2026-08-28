@@ -149,6 +149,9 @@ body {
 .mstat.g .ml::before { background: var(--green); }
 .mstat.b .ml::before { background: var(--primary); }
 .mstat.v .ml::before { background: var(--violet); }
+.mstat.clickable { cursor: pointer; transition: box-shadow .12s, transform .12s, border-color .12s; }
+.mstat.clickable:hover { border-color: var(--primary); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.07); }
+.mstat.active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
 
 /* Список нарушений */
 .deal-list { display: flex; flex-direction: column; }

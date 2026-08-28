@@ -40,12 +40,14 @@ async def stats(session: AsyncSession) -> dict:
     else:
         norm = "—"
 
+    # key — идентификатор фильтра списка нарушений: клик по плашке ставит ?sev=key.
+    # У «В норме» key пуст: это доля сделок без нарушений, показывать в списке нечего.
     stat_rows = [
-        {"n": str(len(over)), "label": "Критичные просрочки", "cls": "r"},
-        {"n": f.money_short(money), "label": "Деньги под риском", "cls": "r"},
-        {"n": str(len(warn)), "label": "Требуют внимания", "cls": "a"},
-        {"n": str(len(review)), "label": "На проверке", "cls": "v"},
-        {"n": norm, "label": "В норме", "cls": "g"},
+        {"n": str(len(over)), "label": "Критичные просрочки", "cls": "r", "key": "over"},
+        {"n": f.money_short(money), "label": "Деньги под риском", "cls": "r", "key": "money"},
+        {"n": str(len(warn)), "label": "Требуют внимания", "cls": "a", "key": "warn"},
+        {"n": str(len(review)), "label": "На проверке", "cls": "v", "key": "review"},
+        {"n": norm, "label": "В норме", "cls": "g", "key": ""},
     ]
     return {"stats": stat_rows, "badge": len(regular)}
 

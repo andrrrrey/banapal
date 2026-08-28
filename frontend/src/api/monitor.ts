@@ -8,6 +8,8 @@ export interface MonStat {
   n: string;
   label: string;
   cls: string;
+  // Идентификатор фильтра списка нарушений (?sev=key). Пустой/нет — плашка некликабельна.
+  key?: string;
 }
 export interface MonStatsResponse {
   stats: MonStat[];
