@@ -89,6 +89,7 @@ def _deal_from_bitrix(
     stages: dict[str, str] | None = None,
     phones: dict[str, str] | None = None,
     sources: dict[str, str] | None = None,
+    has_open_action: bool = False,
 ) -> Deal:
     """Нормализованная сделка Битрикс24 → строка Deal (минимальный безопасный маппинг).
 
@@ -136,6 +137,7 @@ def _deal_from_bitrix(
         first_contact="—",
         created_at=_parse_dt(nd.get("created")),
         last_activity_at=_parse_dt(nd.get("last_activity")),
+        has_open_action=has_open_action,
     )
 
 # Правила отнесения кампании к каналу (по префиксу названия кампании).
@@ -342,8 +344,25 @@ def baseline_from(channels: list[dict], deals: list[dict]) -> dict[str, float]:
 _DEAL_SYNC_FIELDS = (
     "on_dashboard", "ref", "name", "src", "campaign", "utm", "mgr", "mgr_id",
     "phone", "client_type", "refuse_reason", "custom", "status_label", "status_class",
-    "stage", "amount", "created_at", "last_activity_at",
+    "stage", "amount", "created_at", "last_activity_at", "has_open_action",
 )
+
+
+def _open_action_ids(deals: list[dict]) -> set[str]:
+    """external_id сделок с открытой задачей/делом в Битрикс24 (best-effort).
+
+    Признак нужен правилу «Сделка без задачи»: без него любая выгруженная сделка
+    выглядит как «без задачи». Сбой (нет прав, недоступен портал) не должен ронять
+    синхронизацию — тогда признак остаётся пустым, поведение как раньше.
+    """
+    ids = [str(d.get("external_id")) for d in deals if d.get("external_id")]
+    if not ids:
+        return set()
+    try:
+        return factory.get_bitrix24().fetch_open_action_deal_ids(ids)
+    except Exception as exc:  # noqa: BLE001 — признак задач/дел необязателен
+        logger.warning("Битрикс24: задачи/дела сделок недоступны: %s", exc)
+        return set()
 
 # Запас перекрытия окна изменений: покрывает пропущенные тики планировщика и
 # расхождение часов с порталом, чтобы правка сделки не потерялась между запусками.
@@ -421,6 +440,7 @@ async def refresh_deals(session: AsyncSession, *, full: bool = False) -> dict:
             modified_after=since, extra_fields=extra_fields)
 
     users, stages, sources_map, phones = await _bitrix_dictionaries(raw)
+    action_ids = _open_action_ids(raw)
 
     existing = {
         d.external_id: d
@@ -435,7 +455,10 @@ async def refresh_deals(session: AsyncSession, *, full: bool = False) -> dict:
     # и порядок таблицы лидов (а с ним и выбор «оригинала» среди дублей) поплыл бы.
     next_position = max((d.position for d in existing.values()), default=-1) + 1
     for i, nd in enumerate(raw):
-        fresh = _deal_from_bitrix(i, nd, users, stages, phones, sources_map)
+        fresh = _deal_from_bitrix(
+            i, nd, users, stages, phones, sources_map,
+            has_open_action=str(nd.get("external_id")) in action_ids,
+        )
         ext = fresh.external_id
         current = existing.get(ext) if ext else None
         if current is None:
@@ -598,8 +621,12 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     from app.services import data_mode
     await data_mode.clear_no_source_tables(session)
 
+    action_ids = _open_action_ids(deals)
     for i, nd in enumerate(deals):
-        session.add(_deal_from_bitrix(i, nd, users, stages, phones, sources_map))
+        session.add(_deal_from_bitrix(
+            i, nd, users, stages, phones, sources_map,
+            has_open_action=str(nd.get("external_id")) in action_ids,
+        ))
 
     # Сырьё источников по дням — из него считаются расход/клики/визиты за период
     # (иначе показатели остаются одним 30-дневным итогом на все периоды).

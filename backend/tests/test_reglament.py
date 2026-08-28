@@ -7,12 +7,14 @@ import copy
 from collections.abc import Awaitable, Callable
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401
 from app.core.config import settings
 from app.core.db import Base
+from app.models import Deal
 from app.seed import seed_all
 from app.services import admin, content, monitor
 from app.services import violations as vio
@@ -102,6 +104,29 @@ def test_create_task_clears_no_task() -> None:
 
         out = await monitor.create_task_for(s, "Сделка #3390")
         assert out["ok"] is True and out["assignee"]
+
+        after = await vio.evaluate_current(s)
+        assert "no_task" not in _ptypes(after["regular"])
+        assert len(after["regular"]) == 5
+
+    with_seeded(check)
+
+
+def test_bitrix_open_action_clears_no_task() -> None:
+    """Открытая задача/дело в Битрикс24 (флаг has_open_action) гасит «без задачи».
+
+    Эмулирует боевой сценарий: у сделки в портале реально стоит задача или дело,
+    синхронизация выставила has_open_action — движок не должен помечать no_task.
+    """
+    async def check(s: AsyncSession) -> None:
+        before = await vio.evaluate_current(s)
+        assert "no_task" in _ptypes(before["regular"])  # ТеплоДом
+
+        deal = (await s.execute(
+            select(Deal).where(Deal.ref == "Сделка #3390")
+        )).scalar_one()
+        deal.has_open_action = True
+        await s.commit()
 
         after = await vio.evaluate_current(s)
         assert "no_task" not in _ptypes(after["regular"])
