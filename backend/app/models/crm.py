@@ -67,6 +67,9 @@ class Deal(Base):
     last_activity_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Есть открытая задача или дело в Битрикс24 (следующее действие по сделке).
+    # Заполняется боевой синхронизацией; в демо задачи моделируются строками Task.
+    has_open_action: Mapped[bool] = mapped_column(Boolean, default=False)
 
     stage_history: Mapped[list[StageHistory]] = relationship(
         back_populates="deal", cascade="all, delete-orphan"

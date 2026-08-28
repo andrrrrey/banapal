@@ -127,7 +127,9 @@ class Config:
 
 
 def _has_open_task(deal: Deal) -> bool:
-    return any(t.status == "open" for t in deal.tasks)
+    # Незакрытое «следующее действие»: локальная задача (кнопка «Поставить задачу»
+    # / демо-сид) ИЛИ открытая задача/дело из Битрикс24 (флаг has_open_action).
+    return bool(deal.has_open_action) or any(t.status == "open" for t in deal.tasks)
 
 
 def _missing_fields(deal: Deal, req_fields: list[str]) -> list[str]:

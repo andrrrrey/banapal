@@ -268,6 +268,78 @@ class RealBitrix24Adapter:
     def fetch_tasks(self) -> list[dict]:
         return _call("tasks.task.list", {})
 
+    def fetch_open_action_deal_ids(self, deal_ids: list[str]) -> set[str]:
+        """external_id сделок, у которых есть открытая задача или дело в Битрикс24.
+
+        «Следующее действие» по сделке в Битриксе бывает двух видов, и правило
+        «Сделка без задачи» должно гаснуть при любом из них:
+        - дело/активность таймлайна (crm.activity.list, ownerTypeId=2) — то, что
+          менеджер видит во вкладке «Дела», включая todo, созданные приложением;
+        - задача модуля «Задачи», привязанная к сделке через UF_CRM_TASK=D_<id>.
+        Оба источника best-effort: недоступность одного не роняет синхронизацию —
+        просто признак остаётся неполным (в худшем случае лишнее «без задачи»,
+        а не потерянная сделка).
+        """
+        wanted = {str(d) for d in deal_ids if d}
+        if not wanted:
+            return set()
+        found: set[str] = set()
+
+        # 1. Открытые дела/активности сделок (батчами по 50 id, оператор @ = IN).
+        try:
+            ids = sorted(wanted)
+            for i in range(0, len(ids), 50):
+                batch = ids[i:i + 50]
+                rows = _call("crm.activity.list", {
+                    "filter": {"OWNER_TYPE_ID": 2, "COMPLETED": "N", "@OWNER_ID": batch},
+                    "select": ["ID", "OWNER_ID"],
+                })
+                for r in rows:
+                    owner = str(r.get("OWNER_ID") or "")
+                    if owner in wanted:
+                        found.add(owner)
+        except Exception as exc:  # noqa: BLE001 — дела необязательны для синхронизации
+            logger.warning("Битрикс24: список дел (активностей) недоступен: %s", exc)
+
+        # 2. Открытые задачи, привязанные к сделкам (UF_CRM_TASK = D_<id>).
+        try:
+            for task in self._open_tasks():
+                binding = task.get("ufCrmTask") or task.get("UF_CRM_TASK") or []
+                if isinstance(binding, str):
+                    binding = [binding]
+                for b in binding:
+                    text = str(b)
+                    if text.startswith("D_") and text[2:] in wanted:
+                        found.add(text[2:])
+        except Exception as exc:  # noqa: BLE001 — задачи необязательны для синхронизации
+            logger.warning("Битрикс24: список задач недоступен: %s", exc)
+
+        return found
+
+    def _open_tasks(self) -> list[dict]:
+        """Незавершённые задачи портала с CRM-привязкой (постранично).
+
+        tasks.task.list отдаёт иной конверт, чем crm.*-методы (список лежит в
+        result.tasks), поэтому обходим страницы отдельно, а не через _call.
+        """
+        out: list[dict] = []
+        start = 0
+        with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+            while True:
+                resp = request("POST", f"{_base()}/tasks.task.list.json", client=client, json={
+                    "filter": {"!STATUS": 5}, "select": ["ID", "UF_CRM_TASK"], "start": start,
+                })
+                data = resp.json()
+                result = data.get("result") or {}
+                tasks = result.get("tasks") if isinstance(result, dict) else None
+                if tasks:
+                    out.extend(tasks)
+                nxt = data.get("next")
+                if not nxt:
+                    break
+                start = nxt
+        return out
+
     def create_task(self, payload: dict) -> dict:
         """Ставит задачу ответственному и заводит «Дело» в карточке сделки.
 
