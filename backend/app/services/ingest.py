@@ -37,6 +37,7 @@ from app.services import format as f
 from app.services import period as per
 from app.services import rec_style, romi
 from app.services import sources as src_svc
+from app.services.calendar import MSK
 
 logger = get_logger("banapal.ingest")
 
@@ -60,11 +61,17 @@ def _parse_dt(value: str | None) -> datetime | None:
 
 
 def _parse_date(value: str | None) -> datetime | None:
-    """Дата отчёта источника (YYYY-MM-DD) → datetime в UTC."""
+    """Дата отчёта источника (YYYY-MM-DD) → полночь МСК.
+
+    Отчёты Яндекс Директа/Метрики отдают дату в таймзоне кабинета (МСК), поэтому
+    и храним её как московскую полночь — тогда фильтр периода (тоже по МСК)
+    захватывает крайний день окна, а сумма совпадает с кабинетом Директа. Раньше
+    дата стоял на полуночи UTC и «уезжала» относительно московских границ периода.
+    """
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value)).replace(tzinfo=UTC)
+        return datetime.fromisoformat(str(value)).replace(tzinfo=MSK)
     except (ValueError, TypeError):
         return None
 

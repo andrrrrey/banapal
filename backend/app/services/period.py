@@ -15,6 +15,7 @@ import re
 from datetime import UTC, date, datetime, time, timedelta
 
 from app.seeds.kpi import PLABEL, PMUL
+from app.services.calendar import MSK
 
 DEFAULT_PERIOD = "30"
 
@@ -88,26 +89,50 @@ def days(period: str | None) -> int:
     return PERIOD_DAYS[norm_period(period)]
 
 
+def _msk_today(now: datetime) -> date:
+    """Текущая календарная дата в таймзоне рекламных кабинетов (МСК).
+
+    Статистика Яндекс Директа/Метрики и стадии сделок Битрикс24 живут в московском
+    времени, а витрины сравниваются с тем, что клиент видит в кабинете Директа.
+    Поэтому границы периода считаем по московскому календарю, а не по UTC: иначе
+    «сегодня» и «последние N дней» на 3 часа в сутки указывают на другой день.
+    """
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    return now.astimezone(MSK).date()
+
+
 def start(period: str | None, now: datetime) -> datetime:
-    """Начало периода: «сегодня» — с полуночи, остальные — скользящее окно."""
+    """Начало периода — полночь МСК.
+
+    Пресеты — целые календарные дни (по московскому времени, как в кабинете
+    Директа): «сегодня» — с начала текущего дня, «N дней» — с начала дня
+    (today − (N−1)), то есть ровно N календарных дней, включая сегодняшний.
+    Раньше это было скользящее окно от «сейчас»: из-за времени суток в границе
+    крайний день (строки статистики стоят на полуночи) выпадал, и сумма
+    кликов/расхода расходилась с тем, что показывает Директ за «последние N дней».
+    """
     custom = _parse_custom(period)
     if custom is not None:
-        return datetime.combine(custom[0], time.min, tzinfo=now.tzinfo or UTC)
+        return datetime.combine(custom[0], time.min, tzinfo=MSK)
     p = norm_period(period)
+    today = _msk_today(now)
     if p == "today":
-        return now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return now - timedelta(days=PERIOD_DAYS[p])
+        day = today
+    else:
+        day = today - timedelta(days=PERIOD_DAYS[p] - 1)
+    return datetime.combine(day, time.min, tzinfo=MSK)
 
 
 def end(period: str | None, now: datetime) -> datetime | None:
     """Верхняя граница периода (исключающая) или None для открытых пресетов.
 
-    Пресеты — скользящее окно до «сейчас», поэтому верхней границы у них нет.
+    Пресеты открыты сверху (до текущего момента), поэтому верхней границы у них нет.
     Кастомный период ограничен сверху: конечная дата включительно, то есть
-    полночь следующего за ней дня (сравнение идёт как ``created_at < end``).
+    полночь МСК следующего за ней дня (сравнение идёт как ``created_at < end``).
     """
     custom = _parse_custom(period)
     if custom is not None:
         upper = custom[1] + timedelta(days=1)
-        return datetime.combine(upper, time.min, tzinfo=now.tzinfo or UTC)
+        return datetime.combine(upper, time.min, tzinfo=MSK)
     return None

@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import io
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 import httpx
 
 from app.core.config import settings
 from app.integrations.real._http import DEFAULT_TIMEOUT
+from app.services.calendar import MSK
 from app.services.period import WINDOW_DAYS
 
 REPORTS_URL = "https://api.direct.yandex.com/json/v5/reports"
@@ -30,8 +31,12 @@ def _window() -> tuple[str, str]:
 
     LAST_30_DAYS не годится — при переключении периода на «квартал» данных за
     остальные 60 дней просто нет, а «сегодня»/«7 дней» нечем ограничить.
+
+    Границы — по московскому календарю (таймзона кабинета): DateFrom/DateTo в
+    CUSTOM_DATE Директ трактует в часовом поясе кабинета, поэтому в UTC верхняя
+    граница ночью «отстаёт» на день и текущие сутки в отчёт не попадают.
     """
-    today = datetime.now(UTC).date()
+    today = datetime.now(MSK).date()
     return (today - timedelta(days=WINDOW_DAYS)).isoformat(), today.isoformat()
 
 
@@ -138,7 +143,9 @@ class RealYandexDirectAdapter:
             "date": r.get("Date") or None,
             "campaign_id": r.get("CampaignId", ""),
             "campaign": r.get("CampaignName", ""),
-            "spend_gross": int(float(r.get("Cost", 0) or 0)),
+            # Расход округляем, а не отбрасываем копейки: int() всегда вниз, и на
+            # десятках дневных строк расход стабильно занижался против кабинета.
+            "spend_gross": round(float(r.get("Cost", 0) or 0)),
             "clicks": int(float(r.get("Clicks", 0) or 0)),
             "impressions": int(float(r.get("Impressions", 0) or 0)),
         } for r in rows if r.get("CampaignName")]
@@ -161,7 +168,7 @@ class RealYandexDirectAdapter:
             "phrase": r.get("Query", ""),
             "camp": r.get("CampaignName", ""),
             "shows": int(float(r.get("Impressions", 0) or 0)),
-            "spend": int(float(r.get("Cost", 0) or 0)),
+            "spend": round(float(r.get("Cost", 0) or 0)),
             "clicks": int(float(r.get("Clicks", 0) or 0)),
             "conv": int(float(r.get("Conversions", 0) or 0)),
         } for r in rows if r.get("Query")]

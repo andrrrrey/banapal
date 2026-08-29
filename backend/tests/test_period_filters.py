@@ -23,6 +23,7 @@ from app.core.config import settings
 from app.core.db import Base
 from app.models import AdCost, Deal, Visit
 from app.services import analytics, metrics
+from app.services.calendar import MSK
 
 DB_PATH = pathlib.Path(tempfile.gettempdir()) / "banapal_period_test.db"
 
@@ -230,7 +231,9 @@ def test_custom_period_exact_date_and_interval() -> None:
     """
     async def check(s: AsyncSession) -> None:
         def day(days_ago: int) -> str:
-            return (NOW - timedelta(days=days_ago)).date().isoformat()
+            # Границы кастомного периода — по московскому календарю (как в кабинете
+            # Директа), поэтому и опорную дату берём в МСК от того же момента.
+            return (NOW - timedelta(days=days_ago)).astimezone(MSK).date().isoformat()
 
         # Точная дата: только сделка, созданная 3 дня назад (amount 200_000).
         exact = await metrics._period_baseline(s, f"date:{day(3)}")
@@ -258,7 +261,9 @@ def test_custom_period_ad_totals_windowed() -> None:
     """Расход/клики/визиты кастомного интервала ограничены и сверху, и снизу."""
     async def check(s: AsyncSession) -> None:
         def day(days_ago: int) -> str:
-            return (NOW - timedelta(days=days_ago)).date().isoformat()
+            # Границы кастомного периода — по московскому календарю (как в кабинете
+            # Директа), поэтому и опорную дату берём в МСК от того же момента.
+            return (NOW - timedelta(days=days_ago)).astimezone(MSK).date().isoformat()
 
         # Интервал 3..20 дней назад: расход по дням 3 и 20 (2000 + 3000).
         totals = await metrics._ad_totals(s, f"range:{day(20)}:{day(3)}")
