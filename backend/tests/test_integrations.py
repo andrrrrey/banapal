@@ -45,3 +45,44 @@ def test_all_sources_have_factory() -> None:
     assert factory.get_yandex_metrika() is not None
     assert factory.get_calltouch() is not None
     assert factory.get_moysklad() is not None
+
+
+def test_metrika_check_reports_yesterday_visits(monkeypatch) -> None:
+    """Проверка Метрики показывает счётчик и визиты за вчера — для сверки с интерфейсом."""
+    import httpx
+
+    from app.services import integrations_check as ic
+
+    monkeypatch.setattr(settings, "yandex_oauth_token", "token", raising=False)
+    monkeypatch.setattr(settings, "yandex_metrika_counter_id", "50717398", raising=False)
+
+    def fake_get(url, **kwargs):
+        assert kwargs["params"]["date1"] == "yesterday"
+        assert kwargs["params"]["date2"] == "yesterday"
+        return httpx.Response(
+            200, json={"totals": [1546.0]},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(ic.httpx, "get", fake_get)
+    res = ic.check_yandex_metrika()
+    assert res["status"] == "ok"
+    assert "50717398" in res["message"]
+    assert "1\xa0546" in res["message"]  # неразрывный пробел, как в интерфейсе Метрики
+
+
+def test_metrika_check_reports_access_error(monkeypatch) -> None:
+    """403 от Метрики остаётся понятной ошибкой доступа (не молчаливый ok)."""
+    import httpx
+
+    from app.services import integrations_check as ic
+
+    monkeypatch.setattr(settings, "yandex_oauth_token", "token", raising=False)
+    monkeypatch.setattr(settings, "yandex_metrika_counter_id", "50717398", raising=False)
+
+    def fake_get(url, **kwargs):
+        return httpx.Response(403, json={"message": "denied"}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(ic.httpx, "get", fake_get)
+    res = ic.check_yandex_metrika()
+    assert res["status"] == "error"

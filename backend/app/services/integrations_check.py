@@ -40,6 +40,20 @@ def _missing(message: str) -> dict:
     return {"status": "not_configured", "message": message, "detail": ""}
 
 
+def _metrika_totals_visits(resp: httpx.Response) -> int | None:
+    """Итог визитов из ответа Stat API (`{"totals": [N], ...}`) либо None."""
+    try:
+        totals = resp.json().get("totals") or []
+    except (ValueError, AttributeError):
+        return None
+    if not totals:
+        return None
+    try:
+        return int(round(float(totals[0])))
+    except (TypeError, ValueError):
+        return None
+
+
 def _describe_exc(exc: Exception) -> str:
     if isinstance(exc, httpx.TimeoutException):
         return "Превышено время ожидания ответа."
@@ -119,6 +133,11 @@ def check_yandex_direct() -> dict:
     return _err(f"API Директа недоступен (HTTP {resp.status_code}).")
 
 
+def _fmt_int(n: int) -> str:
+    """Целое с неразрывными пробелами между разрядами (как в интерфейсе Метрики)."""
+    return f"{n:,}".replace(",", " ")
+
+
 def check_yandex_metrika() -> dict:
     token = settings.yandex_oauth_token or ""
     counter = settings.yandex_metrika_counter_id or ""
@@ -126,11 +145,14 @@ def check_yandex_metrika() -> dict:
         return _missing("Не указан OAuth-токен Яндекса.")
     if not counter:
         return _missing("Не указан номер счётчика Метрики.")
+    # Сверка: тянем визиты именно за вчера (полный завершённый день) — это же
+    # число видно в интерфейсе счётчика («Вчера»), поэтому сильное расхождение
+    # сразу выдаёт, что подключён не тот счётчик, а не баг витрин.
     params = {
         "ids": counter,
         "metrics": "ym:s:visits",
-        "date1": "7daysAgo",
-        "date2": "today",
+        "date1": "yesterday",
+        "date2": "yesterday",
         "limit": 1,
     }
     headers = {"Authorization": f"OAuth {token}"}
@@ -142,6 +164,13 @@ def check_yandex_metrika() -> dict:
     except Exception as exc:  # noqa: BLE001
         return _err("Ошибка соединения с API Метрики.", _describe_exc(exc))
     if resp.status_code == 200:
+        visits = _metrika_totals_visits(resp)
+        if visits is not None:
+            return _ok(
+                f"Счётчик {counter} · визитов вчера: {_fmt_int(visits)}",
+                "Сверьте это число с интерфейсом Метрики за «Вчера». Сильное "
+                "расхождение обычно значит, что подключён не тот счётчик.",
+            )
         return _ok("Доступ к счётчику подтверждён.", f"Счётчик {counter}")
     if resp.status_code in (401, 403):
         return _err(

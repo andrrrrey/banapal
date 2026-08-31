@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from app.integrations.real import bitrix24, calltouch, moysklad, yandex_direct, yandex_metrika
@@ -30,6 +31,47 @@ def test_metrika_parse_visits() -> None:
     ]}
     visits = yandex_metrika.parse_visits(payload)
     assert visits[0] == {"date": "2026-08-01", "source": "Переходы из рекламы", "visits": 320}
+
+
+def test_metrika_error_detail_extracts_api_message() -> None:
+    """Ошибка счётчика/прав вытаскивается из JSON-ответа Stat API (не молчаливые нули)."""
+    resp = httpx.Response(
+        403,
+        json={"errors": [{"error_type": "access_denied",
+                          "message": "No access to counter"}], "code": 403},
+        request=httpx.Request("GET", yandex_metrika.STAT_URL),
+    )
+    detail = yandex_metrika._error_detail(resp)
+    assert "No access to counter" in detail
+    assert "403" in detail
+
+
+def test_metrika_fetch_visits_raises_on_non_200(monkeypatch) -> None:
+    """Не-200 от Метрики поднимается как ошибка интеграции, а не парсится как «0 визитов»."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "yandex_metrika_counter_id", "12345678", raising=False)
+    monkeypatch.setattr(settings, "yandex_oauth_token", "token", raising=False)
+
+    def fake_request(*args, **kwargs):
+        return httpx.Response(
+            400,
+            json={"message": "Wrong counter id", "code": 400},
+            request=httpx.Request("GET", yandex_metrika.STAT_URL),
+        )
+
+    monkeypatch.setattr(yandex_metrika, "request", fake_request)
+    with pytest.raises(RuntimeError, match="Яндекс Метрика"):
+        yandex_metrika.RealYandexMetrikaAdapter().fetch_visits()
+
+
+def test_metrika_fetch_visits_requires_counter(monkeypatch) -> None:
+    """Пустой номер счётчика — сразу ошибка интеграции, без сетевого запроса."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "yandex_metrika_counter_id", "", raising=False)
+    with pytest.raises(RuntimeError, match="счётчик"):
+        yandex_metrika.RealYandexMetrikaAdapter().fetch_visits()
 
 
 def test_calltouch_parse_calls() -> None:
