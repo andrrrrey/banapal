@@ -70,6 +70,28 @@ def test_payments_source_api_roundtrip(client):
     client.put("/api/integrations", json={"payments_source": "bitrix_won"})
 
 
+def test_payments_source_override_query_param(client):
+    # По умолчанию в БД — bitrix_won.
+    client.put("/api/integrations", json={"payments_source": "bitrix_won"})
+
+    # Явный override фильтра экрана имеет приоритет над значением из БД.
+    d = client.get("/api/analytics/payments?period=30&payments_source=moysklad").json()
+    assert d["source"] == "moysklad"
+
+    # Некорректный override игнорируется — берётся значение из БД.
+    d2 = client.get("/api/analytics/payments?period=30&payments_source=paypal").json()
+    assert d2["source"] == "bitrix_won"
+
+    # Цепочка тоже принимает override (без ошибки).
+    r = client.get("/api/analytics/chain?period=30&payments_source=bitrix_sber")
+    assert r.status_code == 200
+
+    # Лёгкий эндпоинт дефолта отдаёт значение и варианты.
+    ps = client.get("/api/integrations/payments-source").json()
+    assert ps["payments_source"] == "bitrix_won"
+    assert set(ps["options"]) == {"bitrix_won", "moysklad", "bitrix_sber"}
+
+
 def test_payments_breakdown_endpoint(client):
     # Источник bitrix_won: список учтённых оплат (выигранные демо-сделки).
     client.put("/api/integrations", json={"payments_source": "bitrix_won"})

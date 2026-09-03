@@ -108,6 +108,16 @@ export function useDataSource() {
   });
 }
 
+// Настроенный по умолчанию источник оплат + список вариантов (для фильтра на
+// экране «Сквозная аналитика»). Значение по умолчанию задаётся на «Интеграциях».
+export function usePaymentsSourceDefault() {
+  return useQuery<{ payments_source: PaymentsSource; options: PaymentsSource[] }>({
+    queryKey: ["integrations", "payments-source"],
+    queryFn: () => api.get("/integrations/payments-source"),
+    staleTime: 30_000,
+  });
+}
+
 export function useSaveIntegrations() {
   const qc = useQueryClient();
   return useMutation({
@@ -115,6 +125,11 @@ export function useSaveIntegrations() {
     onSuccess: (data) => {
       qc.setQueryData(["integrations"], data);
       qc.setQueryData(["integrations", "data-source"], { data_source: data.data_source });
+      // Обновляем и дефолт источника оплат — фильтр на «Сквозной аналитике» его читает.
+      qc.setQueryData(["integrations", "payments-source"], {
+        payments_source: data.payments_source,
+        options: data.payments_sources,
+      });
     },
   });
 }

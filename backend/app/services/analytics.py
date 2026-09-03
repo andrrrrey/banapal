@@ -22,9 +22,11 @@ def _has_num(text: str) -> bool:
     return any(ch.isdigit() for ch in text)
 
 
-async def chain(session: AsyncSession, period: str) -> list[dict]:
+async def chain(
+    session: AsyncSession, period: str, payments_source: str | None = None
+) -> list[dict]:
     from app.services import metrics
-    base, m = await metrics._base_and_mult(session, period)
+    base, m = await metrics._base_and_mult(session, period, payments_source=payments_source)
     real = settings.data_source == "real"
 
     steps: list[dict] = []

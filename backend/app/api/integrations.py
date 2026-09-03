@@ -82,6 +82,15 @@ async def get_data_source(session: AsyncSession = Depends(get_session)) -> dict[
     return {"data_source": await cfg.load_data_source(session)}
 
 
+@router.get("/payments-source")
+async def get_payments_source(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Настроенный по умолчанию источник оплат + список вариантов (для фильтра экрана)."""
+    return {
+        "payments_source": await cfg.load_payments_source(session),
+        "options": list(cfg.PAYMENTS_SOURCES),
+    }
+
+
 @router.put("/field-map")
 async def put_field_map(
     payload: FieldMapRequest,
