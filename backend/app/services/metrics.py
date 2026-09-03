@@ -572,6 +572,97 @@ async def managers(
     ]
 
 
+# Подписи источников оплат для раскрытия «Оплаты клиентов» на сквозной аналитике.
+_PAYMENTS_LABELS = {
+    "bitrix_won": (
+        "Выигранные сделки Битрикс24",
+        "«Оплатой» считается сделка на успешной стадии воронки (семантика «успех»).",
+    ),
+    "moysklad": (
+        "Входящие платежи МойСклад",
+        "«Оплатой» считается входящий платёж в МойСклад — реальные деньги на счёте/кассе.",
+    ),
+    "bitrix_sber": (
+        "Оплата в сделке (эквайринг Сбербанка)",
+        "«Оплатой» считается сделка с проведённой оплатой (по полю эквайринга; "
+        "без сопоставленного поля — по успешной стадии).",
+    ),
+}
+
+
+async def payments_breakdown(
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+) -> dict:
+    """Расшифровка «Оплаты клиентов»: какие именно оплаты учтены за период.
+
+    Прозрачность для сквозной аналитики: показывает активный источник оплат и сам
+    список учтённых оплат (сделки Битрикс или платежи МойСклад)."""
+    from app.services.integrations_config import get_field_map, load_payments_source
+    src = await load_payments_source(session)
+    label, hint = _PAYMENTS_LABELS.get(src, _PAYMENTS_LABELS["bitrix_won"])
+    real = settings.data_source == "real"
+
+    items: list[dict] = []
+    if src == "moysklad":
+        now = datetime.now(UTC)
+        start = _period_start(period, now)
+        end = _period_end(period, now)
+        where = [
+            Payment.source == "moysklad",
+            Payment.paid_at.is_not(None),
+            Payment.paid_at >= start,
+        ]
+        if end is not None:
+            where.append(Payment.paid_at < end)
+        pays = (await session.execute(
+            select(Payment).where(*where).order_by(Payment.paid_at.desc())
+        )).scalars().all()
+        for p in pays:
+            items.append({
+                "name": "Входящий платёж",
+                "mgr": "", "src": "МойСклад",
+                "date": p.paid_at.strftime("%d.%m.%Y") if p.paid_at else "—",
+                "amount": int(p.amount or 0),
+                "amount_display": f.money(p.amount) if p.amount else "—",
+            })
+    else:
+        # Сделки за период (боевой режим) или все сделки дашборда (демо).
+        if real:
+            deals = await period_deals(session, period, mgr, source)
+        else:
+            stmt = _by_deal_filters(
+                select(Deal).where(Deal.on_dashboard.is_(True)).order_by(Deal.position),
+                mgr, source,
+            )
+            deals = list((await session.execute(stmt)).scalars().all())
+        fm = await get_field_map(session)
+        for d in deals:
+            paid = _deal_is_paid(d, fm) if src == "bitrix_sber" else d.status_class == "st-ok"
+            if not paid:
+                continue
+            when = d.created_at.strftime("%d.%m.%Y") if d.created_at else (d.first_contact or "—")
+            items.append({
+                "name": d.name, "mgr": d.mgr or "—", "src": d.src or "—",
+                "date": when,
+                "amount": int(d.amount or 0),
+                "amount_display": f.money(d.amount) if d.amount else "—",
+            })
+
+    total = sum(i["amount"] for i in items)
+    return {
+        "source": src,
+        "source_label": label,
+        "source_hint": hint,
+        # В демо число оплат = сид × коэффициент периода, поэтому список может не
+        # совпадать со счётчиком плашки — помечаем, чтобы не вводить в заблуждение.
+        "exact": real or src == "moysklad",
+        "count": len(items),
+        "total": total,
+        "total_display": f.money(total) if total else "0 ₽",
+        "items": items,
+    }
+
+
 async def leads(
     session: AsyncSession, mgr: str = "all", source: str = "all",
     risk: str | None = None, period: str = "30",

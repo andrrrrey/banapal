@@ -22,6 +22,23 @@ const RESILIENT = {
 export interface ChainStep {
   label: string; sub: string; color: string; width: number; glow: boolean;
   display: string; conversion: number | null;
+  // Ненулевой drill — шаг кликабелен (напр. «payments» раскрывает оплаты).
+  drill?: string | null;
+}
+
+export interface PaymentItem {
+  name: string; mgr: string; src: string; date: string;
+  amount: number; amount_display: string;
+}
+export interface PaymentsBreakdown {
+  source: string;
+  source_label: string;
+  source_hint: string;
+  exact: boolean;
+  count: number;
+  total: number;
+  total_display: string;
+  items: PaymentItem[];
 }
 
 export interface RomiTag { display: string; cls: string; value: number | null; }
@@ -53,4 +70,14 @@ export const useChannels = (channel: string, period: string) =>
           `&period=${encodeURIComponent(period)}`,
       ),
     ...RESILIENT,
+  });
+
+// Расшифровка «Оплаты клиентов» — грузится только когда открыто окно (enabled).
+export const usePayments = (period: string, enabled: boolean) =>
+  useQuery<PaymentsBreakdown>({
+    queryKey: ["analytics", "payments", period],
+    queryFn: () => api.get(`/analytics/payments?period=${encodeURIComponent(period)}`),
+    enabled,
+    staleTime: 15_000,
+    retry: 2,
   });

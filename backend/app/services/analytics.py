@@ -41,6 +41,8 @@ async def chain(session: AsyncSession, period: str) -> list[dict]:
         steps.append({
             "label": s["label"], "sub": s["sub"], "color": s["color"],
             "width": s["width"], "glow": s.get("glow", False), "display": display,
+            # Шаг «Оплаты» кликабелен: раскрывает, какие именно оплаты учтены.
+            "drill": "payments" if s.get("base_key") == "payments" else None,
         })
 
     # Конверсия между шагами — только когда у обоих соседних шагов есть числа.
