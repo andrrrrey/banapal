@@ -171,7 +171,14 @@ export function useBitrixSchema() {
 
 export interface MpdbColumn { name: string; type: string; }
 export interface MpdbTable { schema: string; table: string; columns: MpdbColumn[]; }
-export interface MpdbSchema { ok: boolean; error?: string; tables: MpdbTable[]; }
+export interface MpdbSchema {
+  ok: boolean;
+  error?: string;
+  tables: MpdbTable[];
+  // Автоопределённый источник оплат в реплике (null — не найден).
+  payments_table?: string | null;
+  payments_mode?: "paymentin" | "demands" | null;
+}
 
 // Структура Postgres-реплики МойСклад (mpdb): таблицы и колонки — по кнопке.
 export function useMoyskladSchema() {

@@ -131,11 +131,20 @@ async def moysklad_schema(session: AsyncSession = Depends(get_session)) -> dict[
 
     def _load() -> dict[str, Any]:
         from app.integrations.real import _pg
+        from app.integrations.real.moysklad import build_payments_query
         try:
             tables = _pg.introspect(dsn)
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc), "tables": []}
-        return {"ok": True, "tables": tables}
+        # Автоопределение источника оплат — чтобы прямо в UI было видно, откуда
+        # соберутся оплаты (платежи paymentin или отгрузки ms_demands), иначе 0.
+        built = build_payments_query(tables)
+        return {
+            "ok": True,
+            "tables": tables,
+            "payments_table": built[2] if built else None,
+            "payments_mode": built[0] if built else None,  # paymentin | demands | None
+        }
 
     return await run_in_threadpool(_load)
 

@@ -68,6 +68,8 @@ class Payment(Base):
         ForeignKey("deals.id", ondelete="SET NULL"), nullable=True
     )
     amount: Mapped[int] = mapped_column(BigInteger, default=0)
+    # Себестоимость по оплате/отгрузке (МойСклад) — для маржи = amount − cost.
+    cost: Mapped[int] = mapped_column(BigInteger, default=0)
     source: Mapped[str] = mapped_column(String(32), default="")
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

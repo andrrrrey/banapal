@@ -10,6 +10,8 @@ export function MpdbSchemaSection() {
   const schema = useMoyskladSchema();
   const { message } = App.useApp();
   const [tables, setTables] = useState<MpdbTable[] | null>(null);
+  const [paymentsTable, setPaymentsTable] = useState<string | null>(null);
+  const [paymentsMode, setPaymentsMode] = useState<"paymentin" | "demands" | null>(null);
   const [q, setQ] = useState("");
 
   const onLoad = async () => {
@@ -21,6 +23,8 @@ export function MpdbSchemaSection() {
         return;
       }
       setTables(res.tables);
+      setPaymentsTable(res.payments_table ?? null);
+      setPaymentsMode(res.payments_mode ?? null);
       if (!res.tables.length) message.warning("В реплике не найдено пользовательских таблиц");
     } catch (e) {
       message.error((e as Error).message);
@@ -62,6 +66,27 @@ export function MpdbSchemaSection() {
           </p>
         ) : (
           <>
+            <div className={`mpdb-pay ${paymentsTable ? "ok" : "warn"}`}>
+              {paymentsTable && paymentsMode === "paymentin" ? (
+                <>
+                  Источник оплат: реальные платежи из <b>{paymentsTable}</b>. «Оплаты: МойСклад»
+                  соберёт входящие платежи при следующем пересчёте.
+                </>
+              ) : paymentsTable && paymentsMode === "demands" ? (
+                <>
+                  Таблицы платежей (paymentin) в реплике нет, поэтому «Оплатой» будут считаться
+                  <b> отгрузки</b> из <b>{paymentsTable}</b> (продажи). Из них же считается маржа
+                  (выручка − себестоимость по <code>ms_products</code>). Запустите «Пересчитать»,
+                  чтобы данные подтянулись.
+                </>
+              ) : (
+                <>
+                  В реплике не найдено ни таблицы платежей (<code>*paymentin*</code>), ни отгрузок
+                  (<code>*demand*</code>). Поэтому «Оплаты: МойСклад» = 0. Варианты: добавить их в
+                  состав реплики или задать API-токен МойСклад как резерв.
+                </>
+              )}
+            </div>
             <div className="mpdb-toolbar">
               <Input
                 allowClear

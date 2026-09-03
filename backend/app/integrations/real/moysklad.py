@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 import httpx
@@ -61,8 +62,9 @@ def parse_profit(rows: list[dict]) -> list[dict]:
 def parse_payments(rows: list[dict]) -> list[dict]:
     """Входящие платежи МойСклад (entity/paymentin) → факты оплаты.
 
-    Возвращает [{external_id, paid_at (ISO), amount (₽)}]. Суммы в API — в копейках.
-    Только проведённые платежи (applicable) — черновики не считаем оплатой.
+    Возвращает [{external_id, paid_at (ISO), amount (₽), cost}]. Суммы в API — в
+    копейках. Только проведённые платежи (applicable). Себестоимость по платежу в
+    API неизвестна (cost=0) — маржа по МойСклад считается из отгрузок (реплика).
     """
     out: list[dict] = []
     for r in rows:
@@ -72,6 +74,7 @@ def parse_payments(rows: list[dict]) -> list[dict]:
             "external_id": r.get("id"),
             "paid_at": r.get("moment"),  # 'YYYY-MM-DD HH:MM:SS(.fff)'
             "amount": int(round(float(r.get("sum", 0)) / 100.0)),  # копейки → рубли
+            "cost": 0,
         })
     return out
 
@@ -161,14 +164,128 @@ _SQL_PROFIT = """
 # поправить этот SQL. Суммы в копейках (как в API МойСклад) → делим на 100. Только
 # проведённые (applicable) платежи. Если запрос падает (нет таблицы/прав), адаптер
 # бросает исключение и FallbackMoyskladAdapter уходит в API МойСклад (paymentin).
-_SQL_PAYMENTS = """
-    SELECT
-        id                       AS external_id,
-        moment                   AS paid_at,
-        COALESCE(sum, 0) / 100.0 AS amount
-    FROM ms_paymentin
-    WHERE applicable IS TRUE
-"""
+# Имена таблиц/колонок у разных выгрузок отличаются, поэтому НЕ хардкодим, а
+# определяем по фактической схеме реплики (см. build_payments_query).
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PAYMENT_TABLE_HINTS = ("paymentin", "payment_in", "incomingpayment", "cashin")
+_AMOUNT_COLS = ("sum", "sum_value", "amount", "value", "total")
+_DATE_COLS = ("moment", "incoming_date", "date", "created", "updated")
+_QTY_COLS = ("quantity", "qty", "count")
+_DOC_ID_COLS = ("demand_id", "operation_id", "document_id", "doc_id", "operation")
+_PRODUCT_FK_COLS = ("product_id", "assortment_id", "good_id")
+_BUY_PRICE_COLS = ("buy_price_value", "buy_price", "cost_price", "purchase_price")
+
+
+def _qi(ident: str) -> str:
+    """Безопасно квотирует идентификатор (имя из information_schema, но проверяем)."""
+    if not _IDENT_RE.match(ident):
+        raise ValueError(f"Недопустимый идентификатор: {ident!r}")
+    return '"' + ident + '"'
+
+
+def _pick(cols: set[str], candidates: tuple[str, ...]) -> str | None:
+    for c in candidates:
+        if c in cols:
+            return c
+    return None
+
+
+def _find_table(tables: list[dict], hint: str) -> dict | None:
+    for t in tables:
+        if hint in t["table"].lower():
+            return t
+    return None
+
+
+def _build_payments_sql(tables: list[dict]) -> tuple[str, str] | None:
+    """SQL входящих платежей (paymentin/cashin) по схеме реплики или None.
+
+    Возвращает (sql, имя_таблицы). cost=0 — себестоимость по платежу неизвестна."""
+    payment_tables = [
+        t for t in tables
+        if any(h in t["table"].lower() for h in _PAYMENT_TABLE_HINTS)
+    ]
+    payment_tables.sort(key=lambda t: 0 if "paymentin" in t["table"].lower() else 1)
+    for t in payment_tables:
+        cols = {c["name"] for c in t["columns"]}
+        amount = _pick(cols, _AMOUNT_COLS)
+        date = _pick(cols, _DATE_COLS)
+        if not amount or not date:
+            continue
+        schema, table = t.get("schema") or "public", t["table"]
+        id_col = "id" if "id" in cols else next(iter(cols))
+        where = f" WHERE {_qi('applicable')} IS TRUE" if "applicable" in cols else ""
+        sql = (
+            f"SELECT {_qi(id_col)} AS external_id, "
+            f"{_qi(date)} AS paid_at, "
+            f"COALESCE({_qi(amount)}, 0) / 100.0 AS amount, "
+            f"0 AS cost "
+            f"FROM {_qi(schema)}.{_qi(table)}{where}"
+        )
+        return sql, table
+    return None
+
+
+def _build_demands_sql(tables: list[dict]) -> tuple[str, str] | None:
+    """SQL оплат из отгрузок ms_demands (когда таблицы платежей нет).
+
+    «Оплата» = отгрузка (продажа). Выручка = сумма позиции, себестоимость =
+    кол-во × закупочная цена товара (JOIN ms_products) — даёт и маржу по МойСклад.
+    Строки сворачиваются по документу отгрузки, если такая колонка есть; иначе
+    каждая строка считается отдельной оплатой. Требует денежную и датовую колонки.
+    Возвращает (sql, имя_таблицы)."""
+    d = _find_table(tables, "demand")
+    if not d:
+        return None
+    dcols = {c["name"] for c in d["columns"]}
+    money = _pick(dcols, _AMOUNT_COLS)
+    date = _pick(dcols, _DATE_COLS)
+    if not money or not date:
+        return None
+    schema = d.get("schema") or "public"
+    dq = f"{_qi(schema)}.{_qi(d['table'])}"
+    id_col = "id" if "id" in dcols else next(iter(dcols))
+    group_key = _pick(dcols, _DOC_ID_COLS) or id_col
+
+    # Себестоимость (для маржи) — из товаров, если есть кол-во, ссылка на товар и
+    # закупочная цена. Иначе cost=0 (маржа = выручка).
+    qty = _pick(dcols, _QTY_COLS)
+    fk = _pick(dcols, _PRODUCT_FK_COLS)
+    cost_expr = "0"
+    join = ""
+    p = _find_table(tables, "product")
+    if p and qty and fk:
+        pcols = {c["name"] for c in p["columns"]}
+        buy = _pick(pcols, _BUY_PRICE_COLS)
+        if buy and "id" in pcols:
+            pq = f"{_qi(p.get('schema') or 'public')}.{_qi(p['table'])}"
+            join = f" LEFT JOIN {pq} p ON p.{_qi('id')} = d.{_qi(fk)}"
+            cost_expr = f"d.{_qi(qty)} * COALESCE(p.{_qi(buy)}, 0)"
+
+    where = f" WHERE d.{_qi('applicable')} IS TRUE" if "applicable" in dcols else ""
+    sql = (
+        f"SELECT d.{_qi(group_key)} AS external_id, "
+        f"MAX(d.{_qi(date)}) AS paid_at, "
+        f"SUM(COALESCE(d.{_qi(money)}, 0)) / 100.0 AS amount, "
+        f"SUM({cost_expr}) / 100.0 AS cost "
+        f"FROM {dq} d{join}{where} "
+        f"GROUP BY d.{_qi(group_key)}"
+    )
+    return sql, d["table"]
+
+
+def build_payments_query(tables: list[dict]) -> tuple[str, str, str] | None:
+    """Как тянуть «оплаты» из реплики: (mode, sql, метка_таблицы) или None.
+
+    mode = 'paymentin' (реальные платежи) либо 'demands' (оплата = отгрузка).
+    Приоритет — у настоящих платежей; отгрузки — фолбэк для схем без paymentin."""
+    p = _build_payments_sql(tables)
+    if p is not None:
+        return "paymentin", p[0], p[1]
+    d = _build_demands_sql(tables)
+    if d is not None:
+        return "demands", d[0], d[1]
+    return None
 
 
 class PgMoyskladAdapter:
@@ -199,9 +316,23 @@ class PgMoyskladAdapter:
         return rows
 
     def fetch_payments(self) -> list[dict]:
-        rows = _pg.run_query(self._dsn(), _SQL_PAYMENTS)
+        dsn = self._dsn()
+        # Источник оплат определяем по фактической схеме реплики: реальные платежи
+        # (paymentin) или, если их нет, отгрузки (ms_demands). Нет ни того, ни
+        # другого → RuntimeError (причина видна в статусе источника, сработает резерв).
+        built = build_payments_query(_pg.introspect(dsn))
+        if built is None:
+            raise RuntimeError(
+                "В реплике МойСклад не найдены ни таблица платежей (*paymentin*), "
+                "ни отгрузки (*demand*). Проверьте состав реплики или задайте "
+                "API-токен МойСклад как резерв."
+            )
+        mode, sql, table = built
+        logger.info("МойСклад-реплика: оплаты из таблицы %s (режим %s)", table, mode)
+        rows = _pg.run_query(dsn, sql)
         for r in rows:
             r["amount"] = int(round(float(r.get("amount") or 0)))
+            r["cost"] = int(round(float(r.get("cost") or 0)))
             # paid_at приходит как datetime/строка — приводим к строке ISO для ingest.
             pv = r.get("paid_at")
             r["paid_at"] = pv.isoformat() if hasattr(pv, "isoformat") else (

@@ -694,6 +694,7 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
         session.add(Payment(
             source="moysklad",
             amount=int(pay.get("amount") or 0),
+            cost=int(pay.get("cost") or 0),
             paid_at=_parse_moment(pay.get("paid_at")),
         ))
     for i, mw in enumerate(minus_words):

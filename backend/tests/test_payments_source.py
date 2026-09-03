@@ -2,8 +2,77 @@
 
 from __future__ import annotations
 
-from app.integrations.real.moysklad import parse_payments
+from app.integrations.real.moysklad import (
+    _build_payments_sql,
+    build_payments_query,
+    parse_payments,
+)
 from app.services.metrics import _deal_is_paid, _truthy_paid
+
+
+def _tbl(name, cols, schema="public"):
+    return {"schema": schema, "table": name, "columns": [{"name": c, "type": "x"} for c in cols]}
+
+
+def test_build_payments_query_prefers_paymentin():
+    tables = [
+        _tbl("ms_demands", ["id", "moment", "sum", "applicable", "quantity", "product_id"]),
+        _tbl("ms_paymentin", ["id", "moment", "sum", "applicable"]),
+    ]
+    mode, sql, table = build_payments_query(tables)
+    assert mode == "paymentin" and table == "ms_paymentin"
+    assert "0 AS cost" in sql  # у платежа себестоимость неизвестна
+
+
+def test_build_payments_query_demands_fallback_with_margin():
+    tables = [
+        _tbl("ms_demands", ["id", "moment", "sum", "applicable", "quantity", "product_id"]),
+        _tbl("ms_products", ["id", "name", "buy_price_value"]),
+    ]
+    mode, sql, table = build_payments_query(tables)
+    assert mode == "demands" and table == "ms_demands"
+    # Себестоимость считается из кол-ва × закупочной цены товара (для маржи).
+    assert '"quantity"' in sql and '"buy_price_value"' in sql
+    assert "LEFT JOIN" in sql and "GROUP BY" in sql
+
+
+def test_build_payments_query_demands_without_products_cost_zero():
+    tables = [_tbl("ms_demands", ["id", "moment", "sum", "applicable"])]
+    mode, sql, _ = build_payments_query(tables)
+    assert mode == "demands"
+    assert "SUM(0) / 100.0 AS cost" in sql  # нет товаров/кол-ва → себестоимость 0
+
+
+def test_build_payments_query_none_without_sources():
+    tables = [_tbl("ms_agents", ["id", "name"]), _tbl("ms_stores", ["id"])]
+    assert build_payments_query(tables) is None
+
+
+def test_build_payments_sql_detects_paymentin():
+    tables = [
+        _tbl("ms_agents", ["id", "name"]),
+        _tbl("ms_paymentin", ["id", "moment", "sum", "applicable"]),
+    ]
+    built = _build_payments_sql(tables)
+    assert built is not None
+    sql, table = built
+    assert table == "ms_paymentin"
+    assert '"ms_paymentin"' in sql and '"moment"' in sql and '"sum"' in sql
+    assert '"applicable" IS TRUE' in sql
+
+
+def test_build_payments_sql_alt_columns_no_applicable():
+    tables = [_tbl("ms_cashin", ["id", "incoming_date", "amount"])]
+    built = _build_payments_sql(tables)
+    assert built is not None
+    sql, _ = built
+    assert '"incoming_date"' in sql and '"amount"' in sql
+    assert "applicable" not in sql  # нет колонки — нет фильтра
+
+
+def test_build_payments_sql_none_when_no_payment_table():
+    tables = [_tbl("ms_agents", ["id"]), _tbl("ms_demands", ["id", "sum", "moment"])]
+    assert _build_payments_sql(tables) is None
 
 
 def test_parse_payments_kopecks_and_applicable():
@@ -19,6 +88,7 @@ def test_parse_payments_kopecks_and_applicable():
     assert out[0]["amount"] == 1500
     assert out[1]["amount"] == 2500  # 250050/100 = 2500.5 → банковское округление
     assert out[0]["paid_at"] == "2026-09-01 10:00:00"
+    assert out[0]["cost"] == 0  # себестоимость платежа неизвестна
 
 
 def test_truthy_paid():

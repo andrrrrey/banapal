@@ -130,8 +130,11 @@ def _deal_is_paid(deal: Deal, fm: dict) -> bool:
     return deal.status_class == "st-ok"
 
 
-async def _ms_payment_totals(session: AsyncSession, period: str) -> tuple[int, int]:
-    """Число и сумма входящих платежей МойСклад за период (по paid_at)."""
+async def _ms_payment_totals(session: AsyncSession, period: str) -> tuple[int, int, int]:
+    """Число, сумма и себестоимость оплат МойСклад за период (по paid_at).
+
+    Возвращает (count, revenue, cost). Маржа = revenue − cost (себестоимость
+    известна, когда оплаты собраны из отгрузок ms_demands; для платежей cost=0)."""
     now = datetime.now(UTC)
     start = _period_start(period, now)
     end = _period_end(period, now)
@@ -142,10 +145,14 @@ async def _ms_payment_totals(session: AsyncSession, period: str) -> tuple[int, i
     ]
     if end is not None:
         where.append(Payment.paid_at < end)
-    cnt, total = (await session.execute(
-        select(func.count(), func.coalesce(func.sum(Payment.amount), 0)).where(*where)
+    cnt, total, cost = (await session.execute(
+        select(
+            func.count(),
+            func.coalesce(func.sum(Payment.amount), 0),
+            func.coalesce(func.sum(Payment.cost), 0),
+        ).where(*where)
     )).one()
-    return int(cnt or 0), int(total or 0)
+    return int(cnt or 0), int(total or 0), int(cost or 0)
 
 
 async def _resolve_payments_source(session: AsyncSession, override: str | None) -> str:
@@ -182,13 +189,13 @@ async def _period_baseline(
     # иначе — значение из БД (переключение в UI действует во всех воркерах сразу).
     src = await _resolve_payments_source(session, payments_source)
     if src == "moysklad":
-        # Оплаты и деньги — из реальных платежей МойСклад за период.
-        pay_count, pay_sum = await _ms_payment_totals(session, period)
+        # Оплаты, деньги и маржа — из МойСклад за период (платежи или отгрузки).
+        pay_count, pay_sum, pay_cost = await _ms_payment_totals(session, period)
         payments = float(pay_count)
         revenue = float(pay_sum)
-        # Маржа по деньгам МойСклад не сводится к себестоимости сделок Битрикс —
-        # оставляем 0 до подключения прибыльности МойСклад (не вводим в заблуждение).
-        margin = 0.0
+        # Маржа = выручка − себестоимость (известна, когда оплаты собраны из
+        # отгрузок ms_demands; для чистых платежей себестоимость 0 → маржа = выручке).
+        margin = float(pay_sum - pay_cost)
     else:
         if src == "bitrix_sber":
             paid = [d for d in rows if _deal_is_paid(d, fm)]
@@ -592,8 +599,10 @@ _PAYMENTS_LABELS = {
         "«Оплатой» считается сделка на успешной стадии воронки (семантика «успех»).",
     ),
     "moysklad": (
-        "Входящие платежи МойСклад",
-        "«Оплатой» считается входящий платёж в МойСклад — реальные деньги на счёте/кассе.",
+        "Оплаты из МойСклад",
+        "«Оплатой» считаются данные МойСклад из реплики: входящие платежи "
+        "(paymentin), а если их нет — отгрузки (ms_demands, продажи). Маржа = "
+        "выручка − себестоимость по отгрузкам.",
     ),
     "bitrix_sber": (
         "Оплата в сделке (эквайринг Сбербанка)",
@@ -634,7 +643,7 @@ async def payments_breakdown(
         )).scalars().all()
         for p in pays:
             items.append({
-                "name": "Входящий платёж",
+                "name": "Оплата (МойСклад)",
                 "mgr": "", "src": "МойСклад",
                 "date": p.paid_at.strftime("%d.%m.%Y") if p.paid_at else "—",
                 "amount": int(p.amount or 0),
