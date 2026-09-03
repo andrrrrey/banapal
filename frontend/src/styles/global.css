@@ -90,6 +90,9 @@ body {
 }
 .seg button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(16,24,40,.09); font-weight: 600; }
 .filterbar .spacer { flex: 1; }
+/* Переключатель периода под блоком триажа на дашборде: относится к витринам ниже. */
+.period-scope { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.period-scope-label { font-size: 12px; color: var(--muted); font-weight: 500; }
 .period-pop { display: flex; flex-direction: column; gap: 10px; min-width: 260px; }
 
 /* ---------- Контент ---------- */
@@ -178,6 +181,21 @@ body {
 .filterpill button { border: none; background: #F1F2F7; width: 22px; height: 22px; border-radius: 50%; cursor: pointer; color: var(--muted); font-size: 15px; line-height: 1; }
 .filterpill button:hover { background: #E7E9F0; color: var(--ink); }
 .empty-note { font-size: 12.5px; color: var(--faint); text-align: center; padding: 26px; }
+/* Доп. фильтры по типу нарушения внутри плашки мониторинга. */
+.subfilters { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--line2); }
+.subchip {
+  display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line);
+  background: #fff; color: var(--muted); font-family: inherit; font-size: 12px; font-weight: 500;
+  padding: 6px 11px; border-radius: 18px; cursor: pointer; transition: .15s;
+}
+.subchip:hover:not(:disabled) { border-color: var(--primary); color: var(--ink); }
+.subchip.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+.subchip:disabled { cursor: default; }
+.subchip-n {
+  font-size: 11px; font-weight: 600; background: #EDEFF5; color: var(--muted);
+  border-radius: 10px; padding: 1px 7px; min-width: 18px; text-align: center;
+}
+.subchip.on .subchip-n { background: rgba(255,255,255,.24); color: #fff; }
 
 /* Админ-панель */
 .admin-grid { grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
@@ -398,6 +416,8 @@ tr.rk-row-mid td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 
 .intg-source { display: flex; flex-direction: column; gap: 10px; }
 .intg-source-note { font-size: 12.5px; color: var(--muted); line-height: 1.5; max-width: 640px; }
+.intg-payments-src { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; padding-top: 14px; border-top: 1px solid var(--line2); }
+.intg-payments-src > label { font-size: 12.5px; font-weight: 600; color: var(--ink); }
 
 .intg-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; padding: 4px 11px; border-radius: 20px; white-space: nowrap; flex: none; }
 .intg-badge .dot { width: 7px; height: 7px; border-radius: 50%; }

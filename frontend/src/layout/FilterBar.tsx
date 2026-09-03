@@ -19,9 +19,15 @@ const PERIODS = [
 // Какие контролы фильтров релевантны на каждой странице. На страницах, которых
 // нет в конфиге (ROMI, AI, Мониторинг, Интеграции, Админ), панель не показывается —
 // эти разделы не используют фильтры.
+//
+// На дашборде переключателя периода в верхней панели нет намеренно: он относится
+// к нижним витринам (Лиды/Сделки/Выручка…), но НЕ к блоку «Что требует внимания
+// сейчас» (триаж всегда «на текущий момент»). Верхний период над этим блоком
+// вводил в заблуждение, поэтому он вынесен под блок триажа (см. DashboardPage +
+// PeriodSegmented). Менеджер и источник остаются вверху — они сужают и триаж тоже.
 type Control = "period" | "channel" | "mgr" | "source";
 const PAGE_FILTERS: Record<string, Control[]> = {
-  "/dashboard": ["period", "mgr", "source"],
+  "/dashboard": ["mgr", "source"],
   "/analytics": ["period", "channel"],
 };
 
@@ -114,6 +120,28 @@ function CustomPeriod({ period, onPick }: { period: string; onPick: (v: string) 
   );
 }
 
+// Переключатель периода (Сегодня / 7 / 30 / Квартал / Период). Вынесен отдельно,
+// чтобы использоваться и в верхней панели (аналитика), и под блоком триажа на
+// дашборде — там он относится к нижним витринам, а не к триажу «на текущий момент».
+export function PeriodSegmented() {
+  const f = useFilters();
+  const customActive = parseCustom(f.period) !== null;
+  return (
+    <div className="seg">
+      {PERIODS.map((p) => (
+        <button
+          key={p.key}
+          className={!customActive && f.period === p.key ? "on" : ""}
+          onClick={() => f.setPeriod(p.key)}
+        >
+          {p.label}
+        </button>
+      ))}
+      <CustomPeriod period={f.period} onPick={f.setPeriod} />
+    </div>
+  );
+}
+
 export function FilterBar() {
   const f = useFilters();
   const o = useFilterOptions();
@@ -123,24 +151,9 @@ export function FilterBar() {
   const controls = path ? PAGE_FILTERS[path] : [];
   if (controls.length === 0) return null;
 
-  const customActive = parseCustom(f.period) !== null;
-
   return (
     <div className="filterbar">
-      {controls.includes("period") ? (
-        <div className="seg">
-          {PERIODS.map((p) => (
-            <button
-              key={p.key}
-              className={!customActive && f.period === p.key ? "on" : ""}
-              onClick={() => f.setPeriod(p.key)}
-            >
-              {p.label}
-            </button>
-          ))}
-          <CustomPeriod period={f.period} onPick={f.setPeriod} />
-        </div>
-      ) : null}
+      {controls.includes("period") ? <PeriodSegmented /> : null}
       <div className="spacer" />
       {controls.includes("channel") ? (
         <Select

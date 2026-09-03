@@ -1,5 +1,5 @@
 import { App, Button, Spin } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { useCreateTask, useMonitorStats, useReview, useViolations } from "@/api/monitor";
@@ -28,6 +28,9 @@ export default function MonitorPage() {
   const [params, setParams] = useSearchParams();
   const filter = params.get("ptype");
   const sev = params.get("sev");
+  // Доп. фильтр по типу нарушения внутри группы плашки (например «Не заполнены
+  // обязательные поля» или «Возможный дубль» среди «Требуют внимания»).
+  const sub = params.get("sub");
   const isReviewFilter = filter === "spam" || filter === "refusal" || sev === "review";
 
   const stats = useMonitorStats();
@@ -40,7 +43,7 @@ export default function MonitorPage() {
   const [done, setDone] = useState<Set<string>>(new Set());
 
   // Фильтрация списка нарушений по серьёзности (клик по плашке статистики).
-  const rows = (() => {
+  const sevRows = useMemo(() => {
     const data = violations.data ?? [];
     if (sev === "over") return data.filter((v) => v.severity === "over");
     if (sev === "warn") return data.filter((v) => v.severity === "warn");
@@ -49,7 +52,27 @@ export default function MonitorPage() {
         .filter((v) => v.severity === "over" && v.amount > 0)
         .sort((a, b) => b.amount - a.amount);
     return data;
-  })();
+  }, [violations.data, sev]);
+
+  // Доп. фильтры внутри группы: типы нарушений (ptype), присутствующие в выборке
+  // плашки, с числом сделок в каждом. Их набор зависит от плашки — у «критичных
+  // просрочек» одни типы, у «требуют внимания» другие (незаполненные поля, дубли…).
+  const subFilters = useMemo(() => {
+    const map = new Map<string, { ptype: string; label: string; count: number }>();
+    for (const v of sevRows) {
+      const e = map.get(v.ptype) ?? { ptype: v.ptype, label: v.kind_label, count: 0 };
+      e.count += 1;
+      map.set(v.ptype, e);
+    }
+    return [...map.values()].sort((a, b) => b.count - a.count);
+  }, [sevRows]);
+
+  // Доп. фильтр показываем только когда активна плашка со списком (over/warn/money)
+  // и типов внутри больше одного — иначе выбирать нечего.
+  const showSubFilters =
+    (sev === "over" || sev === "warn" || sev === "money") && subFilters.length > 1;
+
+  const rows = sub ? sevRows.filter((v) => v.ptype === sub) : sevRows;
 
   const PAGE_SIZE = 20;
   const [page, setPage] = useState(0);
@@ -57,24 +80,49 @@ export default function MonitorPage() {
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageRows = rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
+  // Доп. фильтры для оценочных нарушений «На проверке» (типы spam/refusal).
+  const reviewSubFilters = useMemo(() => {
+    const map = new Map<string, { ptype: string; label: string; count: number }>();
+    for (const v of review.data ?? []) {
+      const e = map.get(v.ptype) ?? { ptype: v.ptype, label: v.kind_label, count: 0 };
+      e.count += 1;
+      map.set(v.ptype, e);
+    }
+    return [...map.values()].sort((a, b) => b.count - a.count);
+  }, [review.data]);
+  const showReviewSubFilters = sev === "review" && reviewSubFilters.length > 1;
+
   // Пагинация списка «Требует решения руководителя» (оценочные — их много).
   const [reviewPage, setReviewPage] = useState(0);
-  const reviewTotal = review.data?.length ?? 0;
+  const reviewData = review.data ?? [];
+  const reviewFiltered =
+    sev === "review" && sub ? reviewData.filter((v) => v.ptype === sub) : reviewData;
+  const reviewTotal = reviewFiltered.length;
   const reviewPages = Math.max(1, Math.ceil(reviewTotal / PAGE_SIZE));
-  const reviewRows = review.data?.slice(
-    reviewPage * PAGE_SIZE, reviewPage * PAGE_SIZE + PAGE_SIZE) ?? [];
+  const reviewRows = reviewFiltered.slice(
+    reviewPage * PAGE_SIZE, reviewPage * PAGE_SIZE + PAGE_SIZE);
 
   // Сброс страниц при смене фильтра или объёма данных.
-  useEffect(() => { setPage(0); }, [filter, sev, total]);
-  useEffect(() => { setReviewPage(0); }, [filter, reviewTotal]);
+  useEffect(() => { setPage(0); }, [filter, sev, sub, total]);
+  useEffect(() => { setReviewPage(0); }, [filter, sub, reviewTotal]);
 
   const clearFilter = () => setParams({});
 
   // Клик по плашке статистики: ставим ?sev=key (фильтры ptype и sev взаимоисключающие);
-  // повторный клик по активной плашке снимает фильтр.
+  // повторный клик по активной плашке снимает фильтр. Доп. фильтр (sub) при этом
+  // сбрасывается — у другой плашки свой набор типов.
   const onStatClick = (key?: string) => {
     if (!key) return;
     setParams(sev === key ? {} : { sev: key });
+  };
+
+  // Клик по чипу доп. фильтра: добавляет ?sub=ptype к активной плашке; повторный
+  // клик по активному чипу снимает доп. фильтр (остаётся только плашка).
+  const onSubClick = (ptype: string) => {
+    const next: Record<string, string> = {};
+    if (sev) next.sev = sev;
+    if (sub !== ptype) next.sub = ptype;
+    setParams(next);
   };
 
   const onTask = (ref: string) => {
@@ -104,6 +152,7 @@ export default function MonitorPage() {
         <div style={{ marginBottom: 14 }}>
           <span className="filterpill">
             Фильтр: <b>{filter ? (PTYPE_LABEL[filter] ?? filter) : (SEV_LABEL[sev!] ?? sev)}</b>
+            {sub ? <b> · {PTYPE_LABEL[sub] ?? sub}</b> : null}
             <button onClick={clearFilter}>×</button>
           </span>
         </div>
@@ -143,6 +192,26 @@ export default function MonitorPage() {
             </span>
           </div>
         </div>
+        {showSubFilters ? (
+          <div className="subfilters">
+            <button
+              className={`subchip${!sub ? " on" : ""}`}
+              onClick={() => onSubClick(sub ?? "")}
+              disabled={!sub}
+            >
+              Все типы <span className="subchip-n">{sevRows.length}</span>
+            </button>
+            {subFilters.map((sf) => (
+              <button
+                key={sf.ptype}
+                className={`subchip${sub === sf.ptype ? " on" : ""}`}
+                onClick={() => onSubClick(sf.ptype)}
+              >
+                {sf.label} <span className="subchip-n">{sf.count}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="deal-list">
           {violations.isLoading ? (
             <div style={{ padding: 40, textAlign: "center" }}>
@@ -187,6 +256,26 @@ export default function MonitorPage() {
             <h3>Требует решения руководителя</h3>
             <span className="sub">оценочные нарушения — автоклассификации не поддаются</span>
           </div>
+          {showReviewSubFilters ? (
+            <div className="subfilters">
+              <button
+                className={`subchip${!sub ? " on" : ""}`}
+                onClick={() => onSubClick(sub ?? "")}
+                disabled={!sub}
+              >
+                Все типы <span className="subchip-n">{reviewData.length}</span>
+              </button>
+              {reviewSubFilters.map((sf) => (
+                <button
+                  key={sf.ptype}
+                  className={`subchip${sub === sf.ptype ? " on" : ""}`}
+                  onClick={() => onSubClick(sf.ptype)}
+                >
+                  {sf.label} <span className="subchip-n">{sf.count}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="deal-list">
             {reviewTotal ? (
               reviewRows.map((v, i) => <ReviewRow key={reviewPage * PAGE_SIZE + i} v={v} />)

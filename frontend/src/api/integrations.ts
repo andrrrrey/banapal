@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 
 export type DataSource = "mock" | "real";
+export type PaymentsSource = "bitrix_won" | "moysklad" | "bitrix_sber";
 
 export interface IntegrationField {
   key: string;
@@ -39,6 +40,8 @@ export interface BitrixSchema {
 
 export interface IntegrationsConfig {
   data_source: DataSource;
+  payments_source: PaymentsSource;
+  payments_sources: PaymentsSource[];
   ai_configured: boolean;
   providers: IntegrationProvider[];
   field_map: FieldMap;
@@ -86,6 +89,7 @@ export interface SavePayload {
   values?: Record<string, string>;
   clear?: string[];
   data_source?: DataSource;
+  payments_source?: PaymentsSource;
 }
 
 export function useIntegrations() {

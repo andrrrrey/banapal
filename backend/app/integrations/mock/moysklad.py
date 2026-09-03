@@ -9,3 +9,6 @@ class MockMoyskladAdapter:
 
     def fetch_profit(self) -> list[dict]:
         return []
+
+    def fetch_payments(self) -> list[dict]:
+        return []

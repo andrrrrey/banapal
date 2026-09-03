@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     # --- Источник данных ---
     data_source: Literal["mock", "real"] = "mock"
 
+    # Источник факта «оплаты» для сквозной аналитики и воронки:
+    #   bitrix_won   — выигранные сделки Битрикс24 (семантика стадии S) — по умолчанию;
+    #   moysklad     — входящие платежи МойСклад (реальные деньги на счёте/кассе);
+    #   bitrix_sber  — сделки с проведённой оплатой (эквайринг Сбербанка), по
+    #                  сопоставленному полю оплаты, иначе — как bitrix_won.
+    # Значение можно переключать на странице «Интеграции» (хранится в БД).
+    payments_source: Literal["bitrix_won", "moysklad", "bitrix_sber"] = "bitrix_won"
+
     # --- Интеграции (Этап E) ---
     bitrix24_webhook_url: str = ""
     bitrix24_inbound_token: str = ""

@@ -185,6 +185,10 @@ _DS_KEY = "__data_source__"
 _CHECKS_KEY = "__checks__"
 _RECOMPUTE_KEY = "__recompute__"
 _FIELD_MAP_KEY = "__field_map__"
+_PAYMENTS_SRC_KEY = "__payments_source__"
+
+# Допустимые источники факта оплаты (см. settings.payments_source).
+PAYMENTS_SOURCES = ("bitrix_won", "moysklad", "bitrix_sber")
 
 # Семантические поля регламента, которые можно сопоставить с полями воронки
 # Битрикс на странице «Интеграции». enables — что даёт заполнение поля.
@@ -202,6 +206,9 @@ FIELD_MAP_TARGETS: list[dict] = [
     {"key": "cost", "label": "Себестоимость сделки",
      "hint": "Числовое поле себестоимости сделки — включает расчёт маржи "
              "(маржа = выручка − себестоимость по выигранным сделкам)."},
+    {"key": "paid", "label": "Признак оплаты (эквайринг)",
+     "hint": "Поле сделки с фактом проведённой оплаты (например статус эквайринга "
+             "Сбербанка). Используется источником оплат «Битрикс24 + Сбербанк»."},
 ]
 _FIELD_MAP_KEYS = frozenset(t["key"] for t in FIELD_MAP_TARGETS)
 
@@ -328,6 +335,8 @@ async def get_config(session: AsyncSession) -> dict:
     overrides = {k: v for k, v in raw.items() if k in FIELD_KEYS}
     stored_ds = raw.get(_DS_KEY)
     data_source = stored_ds if stored_ds in ("mock", "real") else settings.data_source
+    stored_ps = raw.get(_PAYMENTS_SRC_KEY)
+    payments_source = stored_ps if stored_ps in PAYMENTS_SOURCES else settings.payments_source
 
     # AI считается подключённым при заданных ключе и base URL (как в llm.is_configured).
     ai_configured = bool(
@@ -381,6 +390,8 @@ async def get_config(session: AsyncSession) -> dict:
 
     return {
         "data_source": data_source,
+        "payments_source": payments_source,
+        "payments_sources": list(PAYMENTS_SOURCES),
         "ai_configured": ai_configured,
         "providers": providers_out,
         "field_map": field_map,
@@ -409,7 +420,20 @@ async def apply_overrides_from_db(session: AsyncSession) -> int:
     stored_ds = row.data.get(_DS_KEY)
     if stored_ds in ("mock", "real"):
         settings.data_source = stored_ds  # type: ignore[assignment]
+    stored_ps = row.data.get(_PAYMENTS_SRC_KEY)
+    if stored_ps in PAYMENTS_SOURCES:
+        settings.payments_source = stored_ps  # type: ignore[assignment]
     return len(overrides)
+
+
+async def load_payments_source(session: AsyncSession) -> str:
+    """Источник факта оплаты из БД, иначе — текущее значение settings/env."""
+    row = await _load_row(session)
+    if row and isinstance(row.data, dict):
+        stored = row.data.get(_PAYMENTS_SRC_KEY)
+        if stored in PAYMENTS_SOURCES:
+            return stored
+    return settings.payments_source
 
 
 async def save_config(
@@ -418,6 +442,7 @@ async def save_config(
     values: dict[str, str] | None = None,
     clear: list[str] | None = None,
     data_source: str | None = None,
+    payments_source: str | None = None,
 ) -> dict:
     """Сохраняет доступы в БД и накатывает на живой settings.
 
@@ -452,6 +477,10 @@ async def save_config(
     if data_source in ("mock", "real"):
         data[_DS_KEY] = data_source
 
+    # Источник факта оплаты (bitrix_won|moysklad|bitrix_sber) — служебный ключ.
+    if payments_source in PAYMENTS_SOURCES:
+        data[_PAYMENTS_SRC_KEY] = payments_source
+
     if row is None:
         row = IntegrationSettings(id=1, data=data)
         session.add(row)
@@ -464,6 +493,8 @@ async def save_config(
     _apply_to_settings(applied)
     if data_source in ("mock", "real"):
         settings.data_source = data_source  # type: ignore[assignment]
+    if payments_source in PAYMENTS_SOURCES:
+        settings.payments_source = payments_source  # type: ignore[assignment]
 
     # Переключение режима: боевой — убрать демо; демо — восстановить.
     if data_source in ("mock", "real") and data_source != old_ds:
