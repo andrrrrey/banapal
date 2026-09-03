@@ -5,7 +5,15 @@ import { useState } from "react";
 import { useLocation } from "react-router-dom";
 
 import { useFilterOptions } from "@/api/dashboard";
+import { usePaymentsSourceDefault } from "@/api/integrations";
 import { useFilters } from "@/state/filters";
+
+// Короткие подписи источников оплат для фильтра экрана «Сквозная аналитика».
+const PAYMENTS_LABELS: Record<string, string> = {
+  bitrix_won: "Оплаты: Битрикс24 (выигранные)",
+  moysklad: "Оплаты: МойСклад (платежи)",
+  bitrix_sber: "Оплаты: Битрикс24 + Сбербанк",
+};
 
 // Панель фильтров. Опции менеджеров/каналов/источников — реальные из данных БД
 // (в боевом режиме отражают подключённые интеграции; в демо — демо-значения).
@@ -25,10 +33,10 @@ const PERIODS = [
 // сейчас» (триаж всегда «на текущий момент»). Верхний период над этим блоком
 // вводил в заблуждение, поэтому он вынесен под блок триажа (см. DashboardPage +
 // PeriodSegmented). Менеджер и источник остаются вверху — они сужают и триаж тоже.
-type Control = "period" | "channel" | "mgr" | "source";
+type Control = "period" | "channel" | "mgr" | "source" | "payments";
 const PAGE_FILTERS: Record<string, Control[]> = {
   "/dashboard": ["mgr", "source"],
-  "/analytics": ["period", "channel"],
+  "/analytics": ["period", "channel", "payments"],
 };
 
 const ISO = "YYYY-MM-DD";
@@ -149,7 +157,13 @@ export function FilterBar() {
 
   const path = Object.keys(PAGE_FILTERS).find((p) => location.pathname.startsWith(p));
   const controls = path ? PAGE_FILTERS[path] : [];
+  const paySrcDefault = usePaymentsSourceDefault();
   if (controls.length === 0) return null;
+
+  // Эффективное значение фильтра оплат: явный выбор на экране, иначе — настроенный
+  // по умолчанию (страница «Интеграции»).
+  const paySrcOptions = paySrcDefault.data?.options ?? ["bitrix_won", "moysklad", "bitrix_sber"];
+  const paySrcValue = f.paymentsSource ?? paySrcDefault.data?.payments_source ?? "bitrix_won";
 
   return (
     <div className="filterbar">
@@ -177,6 +191,18 @@ export function FilterBar() {
           value={f.source}
           onChange={f.setSource}
           options={opts("Все источники", o.data?.sources ?? [])}
+        />
+      ) : null}
+      {controls.includes("payments") ? (
+        <Select
+          className="fb-select fb-select-wide"
+          value={paySrcValue}
+          onChange={(v) => f.setPaymentsSource(v)}
+          title="Что считать оплатой в цепочке и воронке"
+          options={paySrcOptions.map((v) => ({
+            value: v,
+            label: PAYMENTS_LABELS[v] ?? v,
+          }))}
         />
       ) : null}
     </div>

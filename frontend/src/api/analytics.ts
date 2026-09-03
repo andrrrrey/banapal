@@ -54,10 +54,16 @@ export interface ChannelRow extends Omit<Campaign, "name"> {
   name: string; color: string; campaigns: Campaign[];
 }
 
-export const useChain = (period: string) =>
+// paySrc — необязательный override источника оплат (фильтр экрана). null → сервер
+// использует настроенный по умолчанию.
+const paySrcQs = (paySrc?: string | null) =>
+  paySrc ? `&payments_source=${encodeURIComponent(paySrc)}` : "";
+
+export const useChain = (period: string, paySrc?: string | null) =>
   useQuery<ChainStep[]>({
-    queryKey: ["analytics", "chain", period],
-    queryFn: () => api.get(`/analytics/chain?period=${encodeURIComponent(period)}`),
+    queryKey: ["analytics", "chain", period, paySrc ?? "default"],
+    queryFn: () =>
+      api.get(`/analytics/chain?period=${encodeURIComponent(period)}${paySrcQs(paySrc)}`),
     ...RESILIENT,
   });
 
@@ -73,10 +79,11 @@ export const useChannels = (channel: string, period: string) =>
   });
 
 // Расшифровка «Оплаты клиентов» — грузится только когда открыто окно (enabled).
-export const usePayments = (period: string, enabled: boolean) =>
+export const usePayments = (period: string, enabled: boolean, paySrc?: string | null) =>
   useQuery<PaymentsBreakdown>({
-    queryKey: ["analytics", "payments", period],
-    queryFn: () => api.get(`/analytics/payments?period=${encodeURIComponent(period)}`),
+    queryKey: ["analytics", "payments", period, paySrc ?? "default"],
+    queryFn: () =>
+      api.get(`/analytics/payments?period=${encodeURIComponent(period)}${paySrcQs(paySrc)}`),
     enabled,
     staleTime: 15_000,
     retry: 2,

@@ -16,9 +16,11 @@ router = APIRouter(prefix="/analytics", tags=["analytics"], dependencies=[Depend
 
 @router.get("/chain")
 async def get_chain(
-    period: str = "30", session: AsyncSession = Depends(get_session)
+    period: str = "30",
+    payments_source: str | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    return await analytics.chain(session, period)
+    return await analytics.chain(session, period, payments_source=payments_source)
 
 
 @router.get("/channels")
@@ -33,8 +35,9 @@ async def get_channels(
 @router.get("/payments")
 async def get_payments(
     period: str = "30",
+    payments_source: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Расшифровка «Оплаты клиентов»: активный источник оплат и список учтённых оплат."""
     from app.services import metrics
-    return await metrics.payments_breakdown(session, period)
+    return await metrics.payments_breakdown(session, period, payments_source=payments_source)

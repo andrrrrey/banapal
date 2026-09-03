@@ -27,12 +27,12 @@ function LoadFail({ query }: { query: UseQueryResult<unknown> }) {
 
 export default function AnalyticsPage() {
   const f = useFilters();
-  const chain = useChain(f.period);
+  const chain = useChain(f.period, f.paymentsSource);
   const channels = useChannels(f.channel, f.period);
 
-  // Раскрытие «Оплаты клиентов»: что именно учитывает система.
+  // Раскрытие «Оплаты клиентов»: что именно учитывает система (в выбранном источнике).
   const [payOpen, setPayOpen] = useState(false);
-  const payments = usePayments(f.period, payOpen);
+  const payments = usePayments(f.period, payOpen, f.paymentsSource);
 
   return (
     <>

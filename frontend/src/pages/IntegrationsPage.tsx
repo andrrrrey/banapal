@@ -319,7 +319,7 @@ export default function IntegrationsPage() {
           </p>
 
           <div className="intg-payments-src">
-            <label>Источник факта оплаты (сквозная аналитика и воронка)</label>
+            <label>Источник факта оплаты — по умолчанию</label>
             <Segmented
               value={paymentsSource}
               onChange={(v) => setPaymentsSource(v as PaymentsSource)}
@@ -327,7 +327,11 @@ export default function IntegrationsPage() {
                 (v) => ({ label: PAYMENTS_SOURCE_META[v].label, value: v }),
               )}
             />
-            <p className="intg-source-note">{PAYMENTS_SOURCE_META[paymentsSource].note}</p>
+            <p className="intg-source-note">
+              {PAYMENTS_SOURCE_META[paymentsSource].note}
+              {" "}Это значение по умолчанию: на экране «Сквозная аналитика» источник
+              оплат можно переключить фильтром для просмотра.
+            </p>
           </div>
         </div>
       </div>

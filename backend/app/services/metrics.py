@@ -148,8 +148,17 @@ async def _ms_payment_totals(session: AsyncSession, period: str) -> tuple[int, i
     return int(cnt or 0), int(total or 0)
 
 
+async def _resolve_payments_source(session: AsyncSession, override: str | None) -> str:
+    """Эффективный источник оплат: явный override (фильтр экрана) или значение из БД."""
+    from app.services.integrations_config import PAYMENTS_SOURCES, load_payments_source
+    if override in PAYMENTS_SOURCES:
+        return override  # type: ignore[return-value]
+    return await load_payments_source(session)
+
+
 async def _period_baseline(
-    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all",
+    payments_source: str | None = None,
 ) -> dict[str, float]:
     """Реальные KPI за период — по сделкам с created_at в интервале (боевой режим).
 
@@ -165,13 +174,13 @@ async def _period_baseline(
     (расход/клики/визиты) от них не зависят — см. _ad_totals."""
     rows = await period_deals(session, period, mgr, source)
 
-    from app.services.integrations_config import get_field_map, load_payments_source
+    from app.services.integrations_config import get_field_map
     fm = await get_field_map(session)
     cost_mapped = "cost" in (fm.get("fields") or {})
 
-    # Источник оплат читаем из БД — чтобы переключение в UI действовало во всех
-    # воркерах сразу (как и сопоставление полей), а не только после рестарта.
-    src = await load_payments_source(session)
+    # Источник оплат: явный фильтр экрана «Сквозная аналитика» имеет приоритет,
+    # иначе — значение из БД (переключение в UI действует во всех воркерах сразу).
+    src = await _resolve_payments_source(session, payments_source)
     if src == "moysklad":
         # Оплаты и деньги — из реальных платежей МойСклад за период.
         pay_count, pay_sum = await _ms_payment_totals(session, period)
@@ -214,12 +223,16 @@ async def _period_baseline(
 
 
 async def _base_and_mult(
-    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all",
+    payments_source: str | None = None,
 ) -> tuple[dict[str, float], float]:
     """Базлайн и множитель: боевой режим — реальная фильтрация по датам (mult=1),
-    демо — сохранённый сид × коэффициент периода (как в прототипе)."""
+    демо — сохранённый сид × коэффициент периода (как в прототипе).
+
+    payments_source — необязательный override источника оплат (фильтр экрана
+    «Сквозная аналитика»); действует только в боевом режиме."""
     if settings.data_source == "real":
-        return await _period_baseline(session, period, mgr, source), 1.0
+        return await _period_baseline(session, period, mgr, source, payments_source), 1.0
     return await _baselines(session), per.mult(period)
 
 
@@ -591,14 +604,16 @@ _PAYMENTS_LABELS = {
 
 
 async def payments_breakdown(
-    session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
+    session: AsyncSession, period: str, mgr: str = "all", source: str = "all",
+    payments_source: str | None = None,
 ) -> dict:
     """Расшифровка «Оплаты клиентов»: какие именно оплаты учтены за период.
 
     Прозрачность для сквозной аналитики: показывает активный источник оплат и сам
-    список учтённых оплат (сделки Битрикс или платежи МойСклад)."""
-    from app.services.integrations_config import get_field_map, load_payments_source
-    src = await load_payments_source(session)
+    список учтённых оплат (сделки Битрикс или платежи МойСклад). payments_source —
+    override источника (фильтр экрана), иначе берётся значение из БД."""
+    from app.services.integrations_config import get_field_map
+    src = await _resolve_payments_source(session, payments_source)
     label, hint = _PAYMENTS_LABELS.get(src, _PAYMENTS_LABELS["bitrix_won"])
     real = settings.data_source == "real"
 
