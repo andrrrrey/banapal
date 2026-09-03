@@ -11,6 +11,7 @@ export function MpdbSchemaSection() {
   const { message } = App.useApp();
   const [tables, setTables] = useState<MpdbTable[] | null>(null);
   const [paymentsTable, setPaymentsTable] = useState<string | null>(null);
+  const [paymentsMode, setPaymentsMode] = useState<"paymentin" | "demands" | null>(null);
   const [q, setQ] = useState("");
 
   const onLoad = async () => {
@@ -23,6 +24,7 @@ export function MpdbSchemaSection() {
       }
       setTables(res.tables);
       setPaymentsTable(res.payments_table ?? null);
+      setPaymentsMode(res.payments_mode ?? null);
       if (!res.tables.length) message.warning("В реплике не найдено пользовательских таблиц");
     } catch (e) {
       message.error((e as Error).message);
@@ -65,18 +67,23 @@ export function MpdbSchemaSection() {
         ) : (
           <>
             <div className={`mpdb-pay ${paymentsTable ? "ok" : "warn"}`}>
-              {paymentsTable ? (
+              {paymentsTable && paymentsMode === "paymentin" ? (
                 <>
-                  Таблица оплат найдена: <b>{paymentsTable}</b>. Источник «Оплаты: МойСклад»
-                  соберёт входящие платежи из неё при следующем пересчёте.
+                  Источник оплат: реальные платежи из <b>{paymentsTable}</b>. «Оплаты: МойСклад»
+                  соберёт входящие платежи при следующем пересчёте.
+                </>
+              ) : paymentsTable && paymentsMode === "demands" ? (
+                <>
+                  Таблицы платежей (paymentin) в реплике нет, поэтому «Оплатой» будут считаться
+                  <b> отгрузки</b> из <b>{paymentsTable}</b> (продажи). Из них же считается маржа
+                  (выручка − себестоимость по <code>ms_products</code>). Запустите «Пересчитать»,
+                  чтобы данные подтянулись.
                 </>
               ) : (
                 <>
-                  Таблица входящих платежей в реплике <b>не найдена</b> (ожидается имя вида
-                  <code> *paymentin*</code> / <code>*cashin*</code>). Поэтому «Оплаты: МойСклад» = 0.
-                  Варианты: добавить платежи в состав реплики, задать API-токен МойСклад как
-                  резерв, либо считать оплатой отгрузки (ms_demands) — подскажите, как считаете
-                  оплату, и я подключу нужную таблицу.
+                  В реплике не найдено ни таблицы платежей (<code>*paymentin*</code>), ни отгрузок
+                  (<code>*demand*</code>). Поэтому «Оплаты: МойСклад» = 0. Варианты: добавить их в
+                  состав реплики или задать API-токен МойСклад как резерв.
                 </>
               )}
             </div>

@@ -175,8 +175,9 @@ export interface MpdbSchema {
   ok: boolean;
   error?: string;
   tables: MpdbTable[];
-  // Автоопределённая таблица входящих платежей (null — не найдена).
+  // Автоопределённый источник оплат в реплике (null — не найден).
   payments_table?: string | null;
+  payments_mode?: "paymentin" | "demands" | null;
 }
 
 // Структура Postgres-реплики МойСклад (mpdb): таблицы и колонки — по кнопке.
