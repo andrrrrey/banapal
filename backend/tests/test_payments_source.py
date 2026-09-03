@@ -68,3 +68,25 @@ def test_payments_source_api_roundtrip(client):
 
     # Возврат к значению по умолчанию, чтобы не влиять на другие тесты.
     client.put("/api/integrations", json={"payments_source": "bitrix_won"})
+
+
+def test_payments_breakdown_endpoint(client):
+    # Источник bitrix_won: список учтённых оплат (выигранные демо-сделки).
+    client.put("/api/integrations", json={"payments_source": "bitrix_won"})
+    r = client.get("/api/analytics/payments?period=30")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["source"] == "bitrix_won"
+    assert d["source_label"] and d["source_hint"]
+    assert isinstance(d["items"], list)
+    assert d["count"] == len(d["items"])
+    for it in d["items"][:3]:
+        assert "amount" in it and "amount_display" in it
+
+    # Источник moysklad: без платежей в БД — пусто и корректно.
+    client.put("/api/integrations", json={"payments_source": "moysklad"})
+    dm = client.get("/api/analytics/payments?period=30").json()
+    assert dm["source"] == "moysklad"
+    assert dm["count"] == 0 and dm["items"] == []
+
+    client.put("/api/integrations", json={"payments_source": "bitrix_won"})
