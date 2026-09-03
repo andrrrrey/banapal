@@ -14,6 +14,7 @@ import { ManagersTable } from "@/components/ManagersTable";
 import {
   donutOption, funnelOption, revenueOption, romiBarOption,
 } from "@/components/chartOptions";
+import { PeriodSegmented } from "@/layout/FilterBar";
 import { useFilters } from "@/state/filters";
 
 function ChartCard({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
@@ -41,6 +42,16 @@ export default function DashboardPage() {
   return (
     <>
       {attention.data ? <AttentionBlock data={attention.data} /> : null}
+
+      {/* Период относится к витринам ниже (Лиды/Сделки/Выручка/Маржа и графики),
+          а не к блоку «Что требует внимания сейчас» выше — тот всегда «на текущий
+          момент». Раньше переключатель стоял над триажем и выглядел так, будто
+          управляет и им; здесь он стоит там, где действительно меняет цифры. */}
+      <div className="period-scope">
+        <span className="period-scope-label">Период для показателей ниже</span>
+        <PeriodSegmented />
+      </div>
+
       {kpis.data ? <KpiRow cards={kpis.data} /> : <div style={{ minHeight: 120 }}><Spin /></div>}
 
       <div className="grid two" style={{ marginTop: 16 }}>

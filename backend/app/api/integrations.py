@@ -33,6 +33,7 @@ class SaveRequest(BaseModel):
     values: dict[str, str] = Field(default_factory=dict)
     clear: list[str] = Field(default_factory=list)
     data_source: str | None = None
+    payments_source: str | None = None
 
 
 class FieldMapRequest(BaseModel):
@@ -57,11 +58,21 @@ async def put_integrations(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="data_source должен быть 'mock' или 'real'",
         )
+    if (
+        payload.payments_source is not None
+        and payload.payments_source not in cfg.PAYMENTS_SOURCES
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="payments_source должен быть одним из: "
+                   + ", ".join(cfg.PAYMENTS_SOURCES),
+        )
     return await cfg.save_config(
         session,
         values=payload.values,
         clear=payload.clear,
         data_source=payload.data_source,
+        payments_source=payload.payments_source,
     )
 
 

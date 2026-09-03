@@ -1,8 +1,23 @@
 // Хуки сквозной аналитики (TanStack Query).
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { api } from "./client";
+
+// Общие опции устойчивости для витрин аналитики. Причина: страница читает данные
+// «на лету» из БД, и одиночный сетевой/серверный сбой (кратковременный при
+// параллельной сверке сделок) переводил запрос в ошибку, а вёрстка показывала
+// вечный спиннер до ручной перезагрузки — данные будто «пропадали».
+//   • keepPreviousData — при смене периода/канала не мигаем в пустоту, держим
+//     прошлые данные, пока грузятся новые;
+//   • staleTime — переход между разделами не вызывает жёсткого перезапроса;
+//   • retry с бэкоффом — временный сбой сам восстанавливается, без перезагрузки.
+const RESILIENT = {
+  placeholderData: keepPreviousData,
+  staleTime: 15_000,
+  retry: 3,
+  retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 8000),
+} as const;
 
 export interface ChainStep {
   label: string; sub: string; color: string; width: number; glow: boolean;
@@ -26,6 +41,7 @@ export const useChain = (period: string) =>
   useQuery<ChainStep[]>({
     queryKey: ["analytics", "chain", period],
     queryFn: () => api.get(`/analytics/chain?period=${encodeURIComponent(period)}`),
+    ...RESILIENT,
   });
 
 export const useChannels = (channel: string, period: string) =>
@@ -36,4 +52,5 @@ export const useChannels = (channel: string, period: string) =>
         `/analytics/channels?channel=${encodeURIComponent(channel)}` +
           `&period=${encodeURIComponent(period)}`,
       ),
+    ...RESILIENT,
   });

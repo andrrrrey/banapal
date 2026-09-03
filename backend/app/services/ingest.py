@@ -30,6 +30,7 @@ from app.models import (
     Channel,
     Deal,
     MinusWord,
+    Payment,
     Product,
     Visit,
 )
@@ -67,6 +68,20 @@ def _parse_date(value: str | None) -> datetime | None:
         return datetime.fromisoformat(str(value)).replace(tzinfo=UTC)
     except (ValueError, TypeError):
         return None
+
+
+def _parse_moment(value: str | None) -> datetime | None:
+    """Момент оплаты МойСклад ('YYYY-MM-DD HH:MM:SS[.fff]' или ISO) → aware datetime.
+
+    Наивный момент (без таймзоны) считаем в UTC — как и посуточное сырьё источников,
+    чтобы сравнение с границами периода (aware) не падало."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
 def _stage_class(stage: str | None, semantic: str | None) -> str:
@@ -585,13 +600,21 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     else:
         sources["yandex_metrika"] = {"status": "skipped"}
 
-    # 3. Номенклатура МойСклад (себестоимость/бренды).
+    # 3. Номенклатура МойСклад (себестоимость/бренды) + входящие платежи (оплаты).
     # Источник настроен, если задан DSN реплики mpdb ИЛИ токен API (резерв).
+    ms_payments: list[dict] = []
     if (settings.moysklad_pg_dsn or "").strip() or settings.moysklad_token:
         products = await _fetch_source(
             sources, "moysklad", "МойСклад",
             lambda: factory.get_moysklad().fetch_products(),
             progress, "МойСклад: номенклатура…",
+        )
+        # Оплаты тянем всегда (дёшево): чтобы при переключении источника оплат на
+        # «МойСклад» данные уже были в БД. Сбой не валит пересчёт (best-effort).
+        ms_payments = await _fetch_source(
+            sources, "moysklad_payments", "МойСклад — оплаты",
+            lambda: factory.get_moysklad().fetch_payments(),
+            progress, "МойСклад: входящие платежи…",
         )
     else:
         products = []
@@ -615,6 +638,7 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
     await session.execute(delete(AdCost))
     await session.execute(delete(Visit))
     await session.execute(delete(Product))
+    await session.execute(delete(Payment))
     await session.execute(delete(Baseline))
     # Демо-таблицы без реального источника (менеджеры/рекомендации/минус-слова/
     # демо-история) в боевом режиме держим пустыми — разделы покажут «нет данных».
@@ -664,6 +688,14 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
         session.add(Product(
             name=p["name"], brand=p.get("brand"), cost_price=p.get("cost_price", 0),
         ))
+    # Факты оплаты из МойСклад (входящие платежи) — источник «Оплаты» для сквозной
+    # аналитики при payments_source=moysklad. paid_at даёт фильтрацию по периоду.
+    for pay in ms_payments:
+        session.add(Payment(
+            source="moysklad",
+            amount=int(pay.get("amount") or 0),
+            paid_at=_parse_moment(pay.get("paid_at")),
+        ))
     for i, mw in enumerate(minus_words):
         session.add(MinusWord(
             position=i, phrase=mw["phrase"], camp=mw["camp"],
@@ -681,7 +713,10 @@ async def ingest_all(session: AsyncSession, progress: Progress | None = None) ->
         session.add(Baseline(key=key, value=value))
 
     await session.commit()
-    stats = {"deals": len(deals), "channels": len(channels), "products": len(products)}
+    stats = {
+        "deals": len(deals), "channels": len(channels), "products": len(products),
+        "ms_payments": len(ms_payments),
+    }
     logger.info("ingest завершён: %s", stats)
     return {"mode": "real", "sources": sources, "stats": stats}
 

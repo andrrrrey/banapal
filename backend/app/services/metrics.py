@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models import AdCost, Baseline, Channel, Deal, KpiCard, ManagerControl, Visit
+from app.models import AdCost, Baseline, Channel, Deal, KpiCard, ManagerControl, Payment, Visit
 from app.services import format as f
 from app.services import period as per
 from app.services import romi as romi_svc
@@ -108,27 +108,91 @@ async def period_deals(
     )).scalars().all())
 
 
+def _truthy_paid(value: object) -> bool:
+    """Признак «оплачено» из пользовательского поля (эквайринг Сбербанка).
+
+    Пусто/0/нет → не оплачено; любое непустое осмысленное значение (Y, 1, дата,
+    сумма, «оплачено») → оплачено."""
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text not in ("", "0", "n", "no", "false", "нет", "не оплачено")
+
+
+def _deal_is_paid(deal: Deal, fm: dict) -> bool:
+    """Оплата по сделке для источника bitrix_sber.
+
+    Если сопоставлено поле оплаты (field_map['paid']) — берём его; иначе честно
+    откатываемся к семантике выигранной стадии (как bitrix_won)."""
+    col = (fm.get("fields") or {}).get("paid")
+    if col:
+        return _truthy_paid((deal.custom or {}).get(col))
+    return deal.status_class == "st-ok"
+
+
+async def _ms_payment_totals(session: AsyncSession, period: str) -> tuple[int, int]:
+    """Число и сумма входящих платежей МойСклад за период (по paid_at)."""
+    now = datetime.now(UTC)
+    start = _period_start(period, now)
+    end = _period_end(period, now)
+    where = [
+        Payment.source == "moysklad",
+        Payment.paid_at.is_not(None),
+        Payment.paid_at >= start,
+    ]
+    if end is not None:
+        where.append(Payment.paid_at < end)
+    cnt, total = (await session.execute(
+        select(func.count(), func.coalesce(func.sum(Payment.amount), 0)).where(*where)
+    )).one()
+    return int(cnt or 0), int(total or 0)
+
+
 async def _period_baseline(
     session: AsyncSession, period: str, mgr: str = "all", source: str = "all"
 ) -> dict[str, float]:
     """Реальные KPI за период — по сделкам с created_at в интервале (боевой режим).
 
-    Выигранные сделки определяются по status_class == 'st-ok' (семантика успеха).
-    Маржа считается только если сопоставлено поле себестоимости (иначе 0).
+    Факт «оплаты» и «выручка» зависят от settings.payments_source (страница
+    «Интеграции»):
+      • bitrix_won  — выигранные сделки (status_class == 'st-ok');
+      • bitrix_sber — сделки с проведённой оплатой (поле эквайринга, иначе как won);
+      • moysklad    — входящие платежи МойСклад (реальные деньги; фильтр периода по
+                      дате платежа).
+    Маржа считается только при сопоставленном поле себестоимости (иначе 0); для
+    источника moysklad маржа берётся из прибыльности МойСклад отдельно (пока 0).
     Фильтры «менеджер»/«источник» сужают выборку сделок; рекламные показатели
     (расход/клики/визиты) от них не зависят — см. _ad_totals."""
     rows = await period_deals(session, period, mgr, source)
-    won = [d for d in rows if d.status_class == "st-ok"]
-    revenue = sum(int(d.amount or 0) for d in won)
 
-    # Маржа — только при сопоставленном поле себестоимости (страница «Интеграции»).
-    from app.services.integrations_config import get_field_map
+    from app.services.integrations_config import get_field_map, load_payments_source
     fm = await get_field_map(session)
-    if "cost" in (fm.get("fields") or {}):
-        total_cost = sum(_num((d.custom or {}).get("cost")) for d in won)
-        margin = int(revenue - total_cost)
+    cost_mapped = "cost" in (fm.get("fields") or {})
+
+    # Источник оплат читаем из БД — чтобы переключение в UI действовало во всех
+    # воркерах сразу (как и сопоставление полей), а не только после рестарта.
+    src = await load_payments_source(session)
+    if src == "moysklad":
+        # Оплаты и деньги — из реальных платежей МойСклад за период.
+        pay_count, pay_sum = await _ms_payment_totals(session, period)
+        payments = float(pay_count)
+        revenue = float(pay_sum)
+        # Маржа по деньгам МойСклад не сводится к себестоимости сделок Битрикс —
+        # оставляем 0 до подключения прибыльности МойСклад (не вводим в заблуждение).
+        margin = 0.0
     else:
-        margin = 0
+        if src == "bitrix_sber":
+            paid = [d for d in rows if _deal_is_paid(d, fm)]
+        else:  # bitrix_won (по умолчанию)
+            paid = [d for d in rows if d.status_class == "st-ok"]
+        revenue_int = sum(int(d.amount or 0) for d in paid)
+        payments = float(len(paid))
+        revenue = float(revenue_int)
+        if cost_mapped:
+            total_cost = sum(_num((d.custom or {}).get("cost")) for d in paid)
+            margin = float(int(revenue_int - total_cost))
+        else:
+            margin = 0.0
 
     # Расход/клики/визиты — из посуточного сырья источников за тот же период.
     ad = await _ad_totals(session, period)
@@ -138,9 +202,9 @@ async def _period_baseline(
         "qual": float(sum(1 for d in rows if d.stage not in (None, "Новое обращение"))),
         "deals": float(sum(1 for d in rows if (d.amount or 0) > 0)),
         "invoices": float(sum(1 for d in rows if d.invoice)),
-        "payments": float(len(won)),
-        "revenue": float(revenue),
-        "margin": float(margin),
+        "payments": payments,
+        "revenue": revenue,
+        "margin": margin,
         "spend": ad["spend"],
         "clicks": ad["clicks"],
         "visits": ad["visits"],

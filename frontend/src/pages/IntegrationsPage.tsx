@@ -11,6 +11,7 @@ import {
   type IntegrationField,
   type IntegrationProvider,
   type IntegrationsConfig,
+  type PaymentsSource,
   type RecomputeStatus,
   useCheckAll,
   useCheckIntegration,
@@ -27,7 +28,24 @@ const PROVIDER_NAMES: Record<string, string> = {
   yandex_metrika: "Яндекс Метрика",
   calltouch: "Calltouch",
   moysklad: "МойСклад",
+  moysklad_payments: "МойСклад — оплаты",
   demo: "Демо-данные",
+};
+
+// Подписи и пояснения источников факта оплаты для сквозной аналитики/воронки.
+const PAYMENTS_SOURCE_META: Record<PaymentsSource, { label: string; note: string }> = {
+  bitrix_won: {
+    label: "Битрикс24 (выигранные)",
+    note: "«Оплаты» и деньги считаются по выигранным сделкам Битрикс24 (успешная стадия). Значение по умолчанию.",
+  },
+  moysklad: {
+    label: "МойСклад (платежи)",
+    note: "«Оплаты» и деньги берутся из входящих платежей МойСклад (реальные деньги). Требует подключённого МойСклад (реплика mpdb или API); период фильтруется по дате платежа.",
+  },
+  bitrix_sber: {
+    label: "Битрикс24 + Сбербанк",
+    note: "«Оплаты» считаются по факту проведённой оплаты в сделке (эквайринг Сбербанка). Сопоставьте поле «Признак оплаты» ниже; без него используется успешная стадия.",
+  },
 };
 
 function SourcesSummary({ sources }: { sources: RecomputeStatus["sources"] }) {
@@ -143,6 +161,7 @@ export default function IntegrationsPage() {
 
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [dataSource, setDataSource] = useState<DataSource>("mock");
+  const [paymentsSource, setPaymentsSource] = useState<PaymentsSource>("bitrix_won");
   const [checks, setChecks] = useState<Record<string, CheckResult>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
 
@@ -150,6 +169,7 @@ export default function IntegrationsPage() {
     if (q.data) {
       setDraft(initialDraft(q.data));
       setDataSource(q.data.data_source);
+      setPaymentsSource(q.data.payments_source);
       // Восстанавливаем сохранённые результаты проверок (переживают перезагрузку).
       const saved: Record<string, CheckResult> = {};
       for (const p of q.data.providers) {
@@ -181,13 +201,14 @@ export default function IntegrationsPage() {
   const dirty = useMemo(() => {
     if (!cfg) return false;
     if (dataSource !== cfg.data_source) return true;
+    if (paymentsSource !== cfg.payments_source) return true;
     for (const p of cfg.providers) {
       for (const f of p.fields) {
         if ((draft[f.key] ?? "") !== f.value) return true;
       }
     }
     return false;
-  }, [cfg, draft, dataSource]);
+  }, [cfg, draft, dataSource, paymentsSource]);
 
   if (!cfg) {
     return (
@@ -216,6 +237,7 @@ export default function IntegrationsPage() {
       await save.mutateAsync({
         values: buildValues(),
         data_source: dataSource,
+        payments_source: paymentsSource,
       });
       message.success("Настройки интеграций сохранены");
     } catch (e) {
@@ -295,6 +317,18 @@ export default function IntegrationsPage() {
               ? "Система работает на демонстрационных данных прототипа. Доступы ниже можно заполнить заранее."
               : "Система использует боевые интеграции. Заполните и проверьте доступы ниже — иначе выгрузка данных завершится ошибкой."}
           </p>
+
+          <div className="intg-payments-src">
+            <label>Источник факта оплаты (сквозная аналитика и воронка)</label>
+            <Segmented
+              value={paymentsSource}
+              onChange={(v) => setPaymentsSource(v as PaymentsSource)}
+              options={(cfg.payments_sources ?? ["bitrix_won", "moysklad", "bitrix_sber"]).map(
+                (v) => ({ label: PAYMENTS_SOURCE_META[v].label, value: v }),
+              )}
+            />
+            <p className="intg-source-note">{PAYMENTS_SOURCE_META[paymentsSource].note}</p>
+          </div>
         </div>
       </div>
 

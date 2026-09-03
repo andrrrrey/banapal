@@ -58,6 +58,24 @@ def parse_profit(rows: list[dict]) -> list[dict]:
     return out
 
 
+def parse_payments(rows: list[dict]) -> list[dict]:
+    """Входящие платежи МойСклад (entity/paymentin) → факты оплаты.
+
+    Возвращает [{external_id, paid_at (ISO), amount (₽)}]. Суммы в API — в копейках.
+    Только проведённые платежи (applicable) — черновики не считаем оплатой.
+    """
+    out: list[dict] = []
+    for r in rows:
+        if r.get("applicable") is False:
+            continue
+        out.append({
+            "external_id": r.get("id"),
+            "paid_at": r.get("moment"),  # 'YYYY-MM-DD HH:MM:SS(.fff)'
+            "amount": int(round(float(r.get("sum", 0)) / 100.0)),  # копейки → рубли
+        })
+    return out
+
+
 def _paged(path: str, params: dict | None = None) -> list[dict]:
     rows: list[dict] = []
     offset = 0
@@ -83,6 +101,10 @@ class RealMoyskladAdapter:
 
     def fetch_profit(self) -> list[dict]:
         return parse_profit(_paged("report/profit/byproduct"))
+
+    def fetch_payments(self) -> list[dict]:
+        """Входящие платежи (entity/paymentin) как факты оплаты."""
+        return parse_payments(_paged("entity/paymentin"))
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -133,6 +155,21 @@ _SQL_PROFIT = """
     GROUP BY p.name
 """
 
+# Входящие платежи (реальные оплаты). ДОПУЩЕНИЕ (подтвердить на реальной реплике):
+# в mpdb есть таблица входящих платежей ms_paymentin с колонками (id, moment, sum,
+# applicable). Если таблица называется иначе или лежит в отгрузках (ms_demands) —
+# поправить этот SQL. Суммы в копейках (как в API МойСклад) → делим на 100. Только
+# проведённые (applicable) платежи. Если запрос падает (нет таблицы/прав), адаптер
+# бросает исключение и FallbackMoyskladAdapter уходит в API МойСклад (paymentin).
+_SQL_PAYMENTS = """
+    SELECT
+        id                       AS external_id,
+        moment                   AS paid_at,
+        COALESCE(sum, 0) / 100.0 AS amount
+    FROM ms_paymentin
+    WHERE applicable IS TRUE
+"""
+
 
 class PgMoyskladAdapter:
     """Читает номенклатуру и прибыльность из Postgres-реплики `mpdb`.
@@ -159,6 +196,17 @@ class PgMoyskladAdapter:
         for r in rows:
             r["profit"] = float(r.get("profit") or 0)
             r["cost"] = float(r.get("cost") or 0)
+        return rows
+
+    def fetch_payments(self) -> list[dict]:
+        rows = _pg.run_query(self._dsn(), _SQL_PAYMENTS)
+        for r in rows:
+            r["amount"] = int(round(float(r.get("amount") or 0)))
+            # paid_at приходит как datetime/строка — приводим к строке ISO для ingest.
+            pv = r.get("paid_at")
+            r["paid_at"] = pv.isoformat() if hasattr(pv, "isoformat") else (
+                str(pv) if pv is not None else None
+            )
         return rows
 
 
@@ -204,3 +252,6 @@ class FallbackMoyskladAdapter:
 
     def fetch_profit(self) -> list[dict]:
         return self._with_fallback("fetch_profit")
+
+    def fetch_payments(self) -> list[dict]:
+        return self._with_fallback("fetch_payments")
