@@ -2,8 +2,39 @@
 
 from __future__ import annotations
 
-from app.integrations.real.moysklad import parse_payments
+from app.integrations.real.moysklad import _build_payments_sql, parse_payments
 from app.services.metrics import _deal_is_paid, _truthy_paid
+
+
+def _tbl(name, cols, schema="public"):
+    return {"schema": schema, "table": name, "columns": [{"name": c, "type": "x"} for c in cols]}
+
+
+def test_build_payments_sql_detects_paymentin():
+    tables = [
+        _tbl("ms_agents", ["id", "name"]),
+        _tbl("ms_paymentin", ["id", "moment", "sum", "applicable"]),
+    ]
+    built = _build_payments_sql(tables)
+    assert built is not None
+    sql, table = built
+    assert table == "ms_paymentin"
+    assert '"ms_paymentin"' in sql and '"moment"' in sql and '"sum"' in sql
+    assert '"applicable" IS TRUE' in sql
+
+
+def test_build_payments_sql_alt_columns_no_applicable():
+    tables = [_tbl("ms_cashin", ["id", "incoming_date", "amount"])]
+    built = _build_payments_sql(tables)
+    assert built is not None
+    sql, _ = built
+    assert '"incoming_date"' in sql and '"amount"' in sql
+    assert "applicable" not in sql  # нет колонки — нет фильтра
+
+
+def test_build_payments_sql_none_when_no_payment_table():
+    tables = [_tbl("ms_agents", ["id"]), _tbl("ms_demands", ["id", "sum", "moment"])]
+    assert _build_payments_sql(tables) is None
 
 
 def test_parse_payments_kopecks_and_applicable():

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 import httpx
@@ -161,14 +162,57 @@ _SQL_PROFIT = """
 # поправить этот SQL. Суммы в копейках (как в API МойСклад) → делим на 100. Только
 # проведённые (applicable) платежи. Если запрос падает (нет таблицы/прав), адаптер
 # бросает исключение и FallbackMoyskladAdapter уходит в API МойСклад (paymentin).
-_SQL_PAYMENTS = """
-    SELECT
-        id                       AS external_id,
-        moment                   AS paid_at,
-        COALESCE(sum, 0) / 100.0 AS amount
-    FROM ms_paymentin
-    WHERE applicable IS TRUE
-"""
+# Имя таблицы платежей и её колонки у разных выгрузок отличаются
+# (ms_paymentin / ms_payment_in / ms_cashin; sum/amount; moment/incoming_date),
+# поэтому НЕ хардкодим, а определяем по фактической схеме (_build_payments_sql).
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PAYMENT_TABLE_HINTS = ("paymentin", "payment_in", "incomingpayment", "cashin")
+_AMOUNT_COLS = ("sum", "sum_value", "amount", "value")
+_DATE_COLS = ("moment", "incoming_date", "date", "created", "updated")
+
+
+def _qi(ident: str) -> str:
+    """Безопасно квотирует идентификатор (имя из information_schema, но проверяем)."""
+    if not _IDENT_RE.match(ident):
+        raise ValueError(f"Недопустимый идентификатор: {ident!r}")
+    return '"' + ident + '"'
+
+
+def _pick(cols: set[str], candidates: tuple[str, ...]) -> str | None:
+    for c in candidates:
+        if c in cols:
+            return c
+    return None
+
+
+def _build_payments_sql(tables: list[dict]) -> tuple[str, str] | None:
+    """SQL входящих платежей по фактической схеме реплики или None, если таблицы нет.
+
+    Ищет таблицу платежей по имени (paymentin/cashin…), берёт денежную и датовую
+    колонки, что реально есть. Возвращает (sql, имя_таблицы)."""
+    payment_tables = [
+        t for t in tables
+        if any(h in t["table"].lower() for h in _PAYMENT_TABLE_HINTS)
+    ]
+    # Приоритет: сначала «paymentin», затем прочие кандидаты.
+    payment_tables.sort(key=lambda t: 0 if "paymentin" in t["table"].lower() else 1)
+    for t in payment_tables:
+        cols = {c["name"] for c in t["columns"]}
+        amount = _pick(cols, _AMOUNT_COLS)
+        date = _pick(cols, _DATE_COLS)
+        if not amount or not date:
+            continue
+        schema, table = t.get("schema") or "public", t["table"]
+        id_col = "id" if "id" in cols else next(iter(cols))
+        where = f" WHERE {_qi('applicable')} IS TRUE" if "applicable" in cols else ""
+        sql = (
+            f"SELECT {_qi(id_col)} AS external_id, "
+            f"{_qi(date)} AS paid_at, "
+            f"COALESCE({_qi(amount)}, 0) / 100.0 AS amount "
+            f"FROM {_qi(schema)}.{_qi(table)}{where}"
+        )
+        return sql, table
+    return None
 
 
 class PgMoyskladAdapter:
@@ -199,7 +243,20 @@ class PgMoyskladAdapter:
         return rows
 
     def fetch_payments(self) -> list[dict]:
-        rows = _pg.run_query(self._dsn(), _SQL_PAYMENTS)
+        dsn = self._dsn()
+        # Таблицу платежей определяем по фактической схеме реплики (имена/колонки
+        # у выгрузок отличаются). Нет таблицы → RuntimeError с перечнем таблиц,
+        # чтобы причина была видна в статусе источника (и сработал резерв API).
+        built = _build_payments_sql(_pg.introspect(dsn))
+        if built is None:
+            raise RuntimeError(
+                "В реплике МойСклад не найдена таблица входящих платежей "
+                "(ожидается имя вида *paymentin*/*cashin*). Проверьте состав реплики "
+                "или задайте API-токен МойСклад как резерв."
+            )
+        sql, table = built
+        logger.info("МойСклад-реплика: платежи из таблицы %s", table)
+        rows = _pg.run_query(dsn, sql)
         for r in rows:
             r["amount"] = int(round(float(r.get("amount") or 0)))
             # paid_at приходит как datetime/строка — приводим к строке ISO для ingest.

@@ -131,11 +131,19 @@ async def moysklad_schema(session: AsyncSession = Depends(get_session)) -> dict[
 
     def _load() -> dict[str, Any]:
         from app.integrations.real import _pg
+        from app.integrations.real.moysklad import _build_payments_sql
         try:
             tables = _pg.introspect(dsn)
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc), "tables": []}
-        return {"ok": True, "tables": tables}
+        # Автоопределение таблицы входящих платежей — чтобы прямо в UI было видно,
+        # можно ли вытащить оплаты из реплики (иначе «Оплаты: МойСклад» = 0).
+        built = _build_payments_sql(tables)
+        return {
+            "ok": True,
+            "tables": tables,
+            "payments_table": built[1] if built else None,
+        }
 
     return await run_in_threadpool(_load)
 

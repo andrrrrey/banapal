@@ -10,6 +10,7 @@ export function MpdbSchemaSection() {
   const schema = useMoyskladSchema();
   const { message } = App.useApp();
   const [tables, setTables] = useState<MpdbTable[] | null>(null);
+  const [paymentsTable, setPaymentsTable] = useState<string | null>(null);
   const [q, setQ] = useState("");
 
   const onLoad = async () => {
@@ -21,6 +22,7 @@ export function MpdbSchemaSection() {
         return;
       }
       setTables(res.tables);
+      setPaymentsTable(res.payments_table ?? null);
       if (!res.tables.length) message.warning("В реплике не найдено пользовательских таблиц");
     } catch (e) {
       message.error((e as Error).message);
@@ -62,6 +64,22 @@ export function MpdbSchemaSection() {
           </p>
         ) : (
           <>
+            <div className={`mpdb-pay ${paymentsTable ? "ok" : "warn"}`}>
+              {paymentsTable ? (
+                <>
+                  Таблица оплат найдена: <b>{paymentsTable}</b>. Источник «Оплаты: МойСклад»
+                  соберёт входящие платежи из неё при следующем пересчёте.
+                </>
+              ) : (
+                <>
+                  Таблица входящих платежей в реплике <b>не найдена</b> (ожидается имя вида
+                  <code> *paymentin*</code> / <code>*cashin*</code>). Поэтому «Оплаты: МойСклад» = 0.
+                  Варианты: добавить платежи в состав реплики, задать API-токен МойСклад как
+                  резерв, либо считать оплатой отгрузки (ms_demands) — подскажите, как считаете
+                  оплату, и я подключу нужную таблицу.
+                </>
+              )}
+            </div>
             <div className="mpdb-toolbar">
               <Input
                 allowClear
